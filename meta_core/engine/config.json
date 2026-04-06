@@ -1,0 +1,286 @@
+{
+  "meta": {
+    "home_url": "https://business.facebook.com",
+    "reporting_url": "https://adsmanager.facebook.com/adsmanager/reporting",
+    "login_timeout_sec": 300,
+    "download_wait_timeout_sec": 180,
+    "export_ready_timeout_sec": 300,
+    "history_download_wait_timeout_sec": 300,
+    "history_row_appear_timeout_sec": 90,
+    "history_processing_timeout_sec": 480,
+    "history_poll_sec": 2,
+    "history_download_poll_sec": 2,
+    "history_log_heartbeat_sec": 30,
+    "history_row_disappear_grace_sec": 60,
+    "history_reopen_cooldown_sec": 120,
+    "history_max_reopen_attempts": 2,
+    "history_refresh_every": 0,
+    "history_download_refresh_every": 0,
+    "history_set_search_each_poll": false,
+    "history_processing_refresh_initial_delay_sec": 45,
+    "history_processing_refresh_interval_sec": 60,
+    "history_processing_refresh_max_attempts": 3,
+    "history_processing_refresh_settle_sec": 2,
+    "manual_allow_window_sec": 45,
+    "manual_allow_retry_count": 2,
+    "manual_allow_probe_timeout_sec": 8,
+    "export_history_dom": {
+      "data_grid": ".ReactVirtualized__Grid._1zmk",
+      "grid_container": ".ReactVirtualized__Grid__innerScrollContainer",
+      "export_name_selector": "div.ellipsis",
+      "download_button_selector": "div[role=\"button\"][data-surface*=\"export_history_table_button\"]",
+      "row_height_px": 52
+    },
+    "bulk_export_via_history": true,
+    "use_id_direct_url": true,
+    "require_id_direct_url": true,
+    "report_names": [
+      "BCG_AI",
+      "BCG_AI-Demo"
+    ]
+  },
+  "ap_aim": {
+    "home_url": "https://ap-aim.com",
+    "browser": "edge",
+    "use_uc": false,
+    "login_timeout_sec": 300,
+    "ifo_url": "https://ap-aim.com/pilot2/data-management/ifo",
+    "ifo_ready_timeout_sec": 20,
+    "ifo_ready_poll_sec": 1,
+    "activity_enable_timeout_sec": 10,
+    "ifo_ready_panel_xpaths": [
+      "//div[@role='tabpanel' and @data-state='active']",
+      "//div[@role='tabpanel' and contains(@id,'content-upload')]",
+      "(//div[@role='tabpanel'])[1]"
+    ],
+    "ifo_ready_combobox_xpaths": [
+      "(//div[@role='tabpanel' and @data-state='active']//button[@role='combobox'])[1]",
+      "(//button[@role='combobox'])[1]"
+    ],
+    "ifo_ready_brand_combobox_xpaths": [
+      "(//button[@role='combobox'])[1]"
+    ],
+    "ifo_ready_header_xpaths": [
+      "//*[contains(normalize-space(), '업로드 브랜드 선택')]",
+      "//h1[contains(normalize-space(), '데이터 관리')]"
+    ],
+    "ifo_ready_sensor2_grace_sec": 3,
+    "meta_upload_entry_xpaths": [
+      "(//*[normalize-space()='Meta 캠페인 데이터']/ancestor::*[self::section or self::div][.//button[@data-slot='button' and not(@role='tab') and normalize-space()='데이터 업로드'][1]][1]//button[@data-slot='button' and normalize-space()='데이터 업로드' and not(@disabled) and not(@role='tab')])[1]",
+      "(//*[contains(normalize-space(), 'Meta') and contains(normalize-space(), '캠페인')]/ancestor::*[self::section or self::div][.//button[@data-slot='button' and not(@role='tab') and contains(normalize-space(), '업로드')][1]][1]//button[@data-slot='button' and contains(normalize-space(), '업로드') and not(@disabled) and not(@role='tab')])[1]",
+      "(//*[contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'meta') and (contains(normalize-space(), '캠페인') or contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'campaign'))]/ancestor::*[self::section or self::div][.//button[@data-slot='button' and not(@role='tab') and (contains(normalize-space(), '업로드') or contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'upload'))][1]][1]//button[@data-slot='button' and (contains(normalize-space(), '업로드') or contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'upload')) and not(@disabled) and not(@role='tab')])[1]"
+    ],
+    "meta_upload_button_state_xpaths": [
+      "(//*[normalize-space()='Meta 캠페인 데이터']/ancestor::*[self::section or self::div][.//button[@data-slot='button' and not(@role='tab') and normalize-space()='데이터 업로드'][1]][1]//button[@data-slot='button' and normalize-space()='데이터 업로드' and not(@role='tab')])[1]",
+      "(//*[contains(normalize-space(), 'Meta') and contains(normalize-space(), '캠페인')]/ancestor::*[self::section or self::div][.//button[@data-slot='button' and not(@role='tab') and contains(normalize-space(), '업로드')][1]][1]//button[@data-slot='button' and contains(normalize-space(), '업로드') and not(@role='tab')])[1]",
+      "(//*[contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'meta') and (contains(normalize-space(), '캠페인') or contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'campaign'))]/ancestor::*[self::section or self::div][.//button[@data-slot='button' and not(@role='tab') and (contains(normalize-space(), '업로드') or contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'upload'))][1]][1]//button[@data-slot='button' and (contains(normalize-space(), '업로드') or contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'upload')) and not(@role='tab')])[1]"
+    ],
+    "meta_upload_detail_meta_xpaths": [
+      "//div[@role='tabpanel' and @data-state='active'][.//button[contains(normalize-space(), '전체 데이터 유형')] and .//*[contains(normalize-space(), 'Meta 데이터 업로드')]]",
+      "//div[@role='tabpanel' and @data-state='active'][.//button[contains(normalize-space(), '전체 데이터 유형')] and .//*[contains(normalize-space(), 'Meta Data Upload')]]",
+      "//div[@role='tabpanel' and @data-state='active'][.//button[contains(normalize-space(), '전체 데이터 유형')] and .//button[@role='radio' and @value='meta_workbook_v2']]"
+    ],
+    "meta_upload_detail_google_xpaths": [
+      "//div[@role='tabpanel' and @data-state='active'][.//button[contains(normalize-space(), '전체 데이터 유형')] and .//*[contains(normalize-space(), 'Google 캠페인 데이터')]]",
+      "//div[@role='tabpanel' and @data-state='active'][.//button[contains(normalize-space(), '전체 데이터 유형')] and .//*[contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'google') and contains(normalize-space(), '템플릿')]]"
+    ],
+    "meta_upload_back_to_list_xpaths": [
+      "//div[@role='tabpanel' and @data-state='active']//button[@data-slot='button' and contains(normalize-space(), '전체 데이터 유형')]",
+      "//button[contains(normalize-space(), '전체 데이터 유형')]"
+    ],
+    "meta_upload_ready_xpaths": [
+      "//*[contains(normalize-space(), 'Meta 데이터 업로드')]",
+      "//*[contains(normalize-space(), 'Meta Data Upload')]",
+      "//button[@role='radio' and @value='meta_workbook_v2']",
+      "//*[contains(normalize-space(), 'Meta 엑셀 템플릿')]",
+      "//*[contains(normalize-space(), '엑셀 파일 선택')]",
+      "//*[contains(normalize-space(), 'Choose Files')]",
+      "//input[@type='file']",
+      "//button[contains(normalize-space(), '파일 업로드')]",
+      "//button[contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'upload')]"
+    ],
+    "meta_upload_entry_retry_count": 3,
+    "meta_upload_ready_timeout_sec": 12,
+    "meta_upload_detail_type_strict": true,
+    "meta_upload_wrong_card_recovery_retry_count": 1,
+    "upload_result_timeout_sec": 300,
+    "upload_result_poll_sec": 3,
+    "upload_history_filter_meta": true,
+    "upload_click_only_mode": false,
+    "upload_view_entry_retry_with_refresh": false,
+    "ifo_data_upload_tab_xpaths": [
+      "(//button[@role='tab'])[1]",
+      "//button[@role='tab' and @data-state='inactive'][1]"
+    ]
+  },
+  "brands": [
+    {
+      "brand_ko": "\uc124\ud654\uc218",
+      "meta_business_portfolio": "\uc124\ud654\uc218",
+      "meta_ad_account": "\uc124\ud654\uc218_BA\ud300_Agency_2026",
+      "meta_act_id": "25677014865297054",
+      "meta_ad_account_id": "25677014865297054",
+      "meta_business_id": "1710208615928799",
+      "meta_global_scope_id": "",
+      "meta_view_event_source": "CLICK_REPORTS_FROM_SIDE_NAV",
+      "meta_export_event_source": "CLICK_EXPORT_HISTORY_FROM_SIDE_NAV",
+      "default_meta_reports_by_sheet": {
+        "Overall": "BCG_AI",
+        "Demo": "BCG_AI Demo",
+        "Time": ""
+      },
+      "meta_report_id_by_sheet": {
+        "Overall": "120241201228010504",
+        "Demo": "120241204346760504",
+        "Time": ""
+      },
+      "default_meta_report_ids_by_sheet": {
+        "Overall": "120241201228010504",
+        "Demo": "120241204346760504",
+        "Time": ""
+      },
+      "ap_aim_activity_options": [
+        "CGRC",
+        "Lumiwise"
+      ],
+      "default_ap_aim_activity": "Lumiwise"
+    },
+    {
+      "brand_ko": "\uc774\ub2c8\uc2a4\ud504\ub9ac",
+      "meta_business_portfolio": "Innisfree",
+      "meta_ad_account": "innisfree \uad11\uace0_\uacc4\uc815",
+      "meta_act_id": "2453732671358875",
+      "meta_ad_account_id": "2453732671358875",
+      "meta_business_id": "1128825357130113",
+      "meta_global_scope_id": "1128825357130113",
+      "meta_view_event_source": "",
+      "meta_export_event_source": "",
+      "default_meta_reports_by_sheet": {
+        "Overall": "BCG_AI",
+        "Demo": "BCG_AI_DEMO",
+        "Time": ""
+      },
+      "meta_report_id_by_sheet": {
+        "Overall": "120239044728480337",
+        "Demo": "120239044444880337",
+        "Time": ""
+      },
+      "default_meta_report_ids_by_sheet": {
+        "Overall": "120239044728480337",
+        "Demo": "120239044444880337",
+        "Time": ""
+      },
+      "ap_aim_activity_options": [
+        "GTSC"
+      ],
+      "default_ap_aim_activity": "GTSC"
+    },
+    {
+      "brand_ko": "\ub77c\ub124\uc988",
+      "meta_business_portfolio": "Laneige ap",
+      "meta_ad_account": "ADEF_\ub77c\ub124\uc988",
+      "meta_act_id": "997726127432513",
+      "meta_ad_account_id": "997726127432513",
+      "meta_business_id": "337110929980309",
+      "meta_global_scope_id": "337110929980309",
+      "meta_view_event_source": "",
+      "meta_export_event_source": "",
+      "default_meta_reports_by_sheet": {
+        "Overall": "BCG_AI",
+        "Demo": "BCG_AI_DEMO",
+        "Time": ""
+      },
+      "meta_report_id_by_sheet": {
+        "Overall": "120240413766100380",
+        "Demo": "120240413773990380",
+        "Time": ""
+      },
+      "default_meta_report_ids_by_sheet": {
+        "Overall": "120240413766100380",
+        "Demo": "120240413773990380",
+        "Time": ""
+      },
+      "ap_aim_activity_options": [
+        "Mewy"
+      ],
+      "default_ap_aim_activity": "Mewy"
+    }
+  ],
+  "transform": {
+    "template_workbook_path": "../_tmp_meta/pilot2-meta-template.xlsx",
+    "exclude_views_column": false,
+    "include_currency_code": false,
+    "sheet_schema": {
+      "Overall": [
+        "Day",
+        "Campaign ID",
+        "Campaign Name",
+        "Ad Set ID",
+        "Ad Set Name",
+        "Ad ID",
+        "Ad Name",
+        "Amount Spent (KRW)",
+        "CPQV (KRW)",
+        "Clicks (All)",
+        "Link Clicks",
+        "Impressions",
+        "Reach",
+        "Frequency",
+        "Video Plays at 50%",
+        "Video Plays at 100%",
+        "Views",
+        "QualifiedVisit",
+        "Purchases"
+      ],
+      "Demo": [
+        "Day",
+        "Campaign ID",
+        "Campaign Name",
+        "Ad Set ID",
+        "Ad Set Name",
+        "Ad ID",
+        "Ad Name",
+        "Age",
+        "Gender",
+        "Amount Spent (KRW)",
+        "CPQV (KRW)",
+        "Clicks (All)",
+        "Link Clicks",
+        "Impressions",
+        "Reach",
+        "Frequency",
+        "Video Plays at 50%",
+        "Video Plays at 100%",
+        "Views",
+        "QualifiedVisit",
+        "Purchases"
+      ]
+    },
+    "target_to_source_column_map": {
+      "Campaign Name": "Campaign name",
+      "Ad Set Name": "Ad set name",
+      "Ad Name": "Ad name",
+      "Amount Spent (KRW)": "Amount spent (KRW)",
+      "CPQV (KRW)": "Cost per QualifiedVisit",
+      "Clicks (All)": "Clicks (all)",
+      "Link Clicks": "Link clicks",
+      "Video Plays at 50%": "Video plays at 50%",
+      "Video Plays at 100%": "Video plays at 100%",
+      "Views": "Views"
+    },
+    "source_sheet_map": {
+      "Overall": {
+        "file_key": "BCG_AI",
+        "sheet_name": "Raw Data Report"
+      },
+      "Demo": {
+        "file_key": "BCG_AI-Demo",
+        "sheet_name": "Creative Reporting"
+      }
+    }
+  },
+  "naming": {
+    "raw_file_name_pattern": "{brand}_{activity}_{yyMMdd}_{sheet}.xlsx",
+    "final_file_name_pattern": "{brand}_{activity}_{yyMMdd}_Unified.xlsx"
+  }
+}

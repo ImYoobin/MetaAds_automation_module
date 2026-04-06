@@ -1,0 +1,12 @@
+[server]
+headless = true
+address = "127.0.0.1"
+port = 8502
+
+[browser]
+serverAddress = "localhost"
+serverPort = 8502
+gatherUsageStats = false
+
+[logger]
+level = "info"

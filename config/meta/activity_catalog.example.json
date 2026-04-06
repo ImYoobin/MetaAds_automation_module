@@ -1,0 +1,33 @@
+{
+  "view_event_source": "CLICK_REPORTS_FROM_SIDE_NAV",
+  "export_event_source": "CLICK_EXPORT_HISTORY_FROM_SIDE_NAV",
+  "brands": [
+    {
+      "code": "brand_a",
+      "name": "Brand A",
+      "enabled": true,
+      "activities": [
+        {
+          "name": "Activity 1",
+          "enabled": true,
+          "reports": {
+            "Overall": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=111111111111111&ads_manager_write_regions=true&business_id=333333333333333&global_scope_id=333333333333333&event_source=CLICK_REPORTS_FROM_SIDE_NAV&selected_report_id=444444444444444444"
+              }
+            ],
+            "Demo": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=111111111111111&ads_manager_write_regions=true&business_id=333333333333333&global_scope_id=333333333333333&event_source=CLICK_REPORTS_FROM_SIDE_NAV&selected_report_id=555555555555555555"
+              }
+            ],
+            "Overall_BoF": [],
+            "Demo_BoF": [],
+            "Time": [],
+            "Time_BoF": []
+          }
+        }
+      ]
+    }
+  ]
+}

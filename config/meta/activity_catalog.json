@@ -1,0 +1,160 @@
+{
+  "view_event_source": "CLICK_REPORTS_FROM_SIDE_NAV",
+  "export_event_source": "CLICK_EXPORT_HISTORY_FROM_SIDE_NAV",
+  "brands": [
+    {
+      "code": "inn_oy",
+      "name": "Innisfree Olive Young",
+      "enabled": true,
+      "activities": [
+        {
+          "name": "RCRA",
+          "enabled": true,
+          "reports": {
+            "Overall": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242854739680504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242855347490504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Overall_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913129000504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913137960504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Time": [],
+            "Time_BoF": []
+          }
+        },
+        {
+          "name": "COVC",
+          "enabled": true,
+          "reports": {
+            "Overall": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913153400504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913153610504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Overall_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913143560504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913145620504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Time": [],
+            "Time_BoF": []
+          }
+        },
+        {
+          "name": "NSBSUNP",
+          "enabled": true,
+          "reports": {
+            "Overall": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913171060504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913173130504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Overall_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913180470504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913182030504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Time": [],
+            "Time_BoF": []
+          }
+        },
+        {
+          "name": "NSBSUN",
+          "enabled": true,
+          "reports": {
+            "Overall": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913196220504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913194170504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Overall_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913188830504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=894541601603577&ads_manager_write_regions=true&business_id=1128825357130113&global_scope_id=1128825357130113&selected_report_id=120242913186720504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Time": [],
+            "Time_BoF": []
+          }
+        }
+      ]
+    },
+    {
+      "code": "sulwhasoo",
+      "name": "Sulwhasoo",
+      "enabled": false,
+      "activities": [
+        {
+          "name": "Lumiwise",
+          "enabled": true,
+          "reports": {
+            "Overall": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=25677014865297054&ads_manager_write_regions=true&business_id=1710208615928799&global_scope_id=1710208615928799&selected_report_id=120241201228010504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=25677014865297054&ads_manager_write_regions=true&business_id=1710208615928799&global_scope_id=1710208615928799&selected_report_id=120241204346760504&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Overall_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=569131265773188&ads_manager_write_regions=true&business_id=657031417996396&global_scope_id=657031417996396&selected_report_id=120245325239840558&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Demo_BoF": [
+              {
+                "url": "https://adsmanager.facebook.com/adsmanager/reporting/view?act=569131265773188&ads_manager_write_regions=true&business_id=657031417996396&global_scope_id=657031417996396&selected_report_id=120245325033810558&event_source=CLICK_REPORTS_FROM_SIDE_NAV"
+              }
+            ],
+            "Time": [],
+            "Time_BoF": []
+          }
+        }
+      ]
+    }
+  ]
+}
