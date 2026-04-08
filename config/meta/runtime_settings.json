@@ -1,0 +1,6 @@
+{
+  "browser": "chrome",
+  "output_dir": "%USERPROFILE%\\MetaAdsExport\\output",
+  "downloads_dir": "%USERPROFILE%\\MetaAdsExport\\downloads",
+  "logs_dir": "%USERPROFILE%\\MetaAdsExport\\logs"
+}

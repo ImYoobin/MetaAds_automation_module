@@ -144,6 +144,19 @@ def _toggle_bool_key(key: str) -> None:
     st.session_state[key] = not bool(st.session_state.get(key, False))
 
 
+def _reset_flag_key(input_key: str) -> str:
+    return f"{input_key}__reset"
+
+
+def _consume_input_reset(input_key: str) -> None:
+    if bool(st.session_state.pop(_reset_flag_key(input_key), False)):
+        st.session_state[input_key] = ""
+
+
+def _request_input_reset(input_key: str) -> None:
+    st.session_state[_reset_flag_key(input_key)] = True
+
+
 def _inject_ui_css() -> None:
     st.markdown(
         """
@@ -176,8 +189,11 @@ def _inject_ui_css() -> None:
             background-color: #1d4ed8 !important; border: 1px solid #1e40af !important;
         }
         div[class*="st-key-toggle_brand_open_"] button,
+        div[class*="st-key-toggle_brand_closed_"] button,
         div[class*="st-key-toggle_activity_open_"] button,
-        div[class*="st-key-toggle_sheet_open_"] button {
+        div[class*="st-key-toggle_activity_closed_"] button,
+        div[class*="st-key-toggle_sheet_open_"] button,
+        div[class*="st-key-toggle_sheet_closed_"] button {
             background-color: #e5e7eb !important; border: 1px solid #9ca3af !important; color: #111827 !important;
         }
         </style>
@@ -322,7 +338,8 @@ def _render_sheet_inline_editor(
                 )
 
     add_input_key = f"url_add_{safe_activity}_{safe_sheet}"
-    add_cols = st.columns([0.45, 5.6, 1.8], vertical_alignment="center")
+    _consume_input_reset(add_input_key)
+    add_cols = st.columns([0.45, 5.6, 0.9, 0.9], vertical_alignment="center")
     add_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
     raw_candidate = add_cols[1].text_input(
         f"{sheet_name} 새 URL",
@@ -337,7 +354,7 @@ def _render_sheet_inline_editor(
         except UrlValidationError as exc:
             add_cols[1].error(f"URL 파싱 실패: {exc}")
 
-    if add_cols[2].button("+ URL 추가", key=f"add_url_{safe_activity}_{safe_sheet}", use_container_width=True):
+    if add_cols[2].button("저장", key=f"add_url_{safe_activity}_{safe_sheet}", use_container_width=True):
         ok, message, _ = add_sheet_url(
             config_data,
             brand_code=brand_code,
@@ -347,7 +364,7 @@ def _render_sheet_inline_editor(
         )
         if ok:
             save_callback()
-            st.session_state[add_input_key] = ""
+            _request_input_reset(add_input_key)
             _push_management_message(
                 f"✅ {brand_name} · {activity_name} · {sheet_name} URL을 추가했습니다.",
                 level="success",
@@ -357,6 +374,9 @@ def _render_sheet_inline_editor(
             f"⚠️ {brand_name} · {activity_name} · {sheet_name} URL 추가 실패: {message}",
             level="warning",
         )
+    if add_cols[3].button("삭제", key=f"delete_new_url_{safe_activity}_{safe_sheet}", use_container_width=True):
+        _request_input_reset(add_input_key)
+        st.rerun()
 
 
 def _render_activity_sheets(
@@ -369,11 +389,11 @@ def _render_activity_sheets(
     activity: dict[str, Any],
     save_callback: Callable[[], None],
 ) -> None:
-    header_cols = st.columns([0.45, 2.6, 1.6, 2.2], vertical_alignment="center")
+    header_cols = st.columns([0.45, 2.6, 1.6, 0.8], vertical_alignment="center")
     header_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
     header_cols[1].markdown("**시트**")
     header_cols[2].markdown("**URL 현황**")
-    header_cols[3].markdown("**동작**")
+    header_cols[3].markdown("**열기**")
 
     for sheet_name in SHEET_DISPLAY_ORDER:
         entries = _ensure_sheet_entries(activity, sheet_name)
@@ -381,9 +401,9 @@ def _render_activity_sheets(
         status_text = f"🟢 {url_count}개" if url_count > 0 else "⚫ 0개"
         sheet_open_key = f"ui_sheet_open_{_safe_key(activity_id)}_{_safe_key(sheet_name)}"
         is_sheet_open = bool(st.session_state.get(sheet_open_key, False))
-        action_label = "+ URL 추가" if url_count <= 0 else ("URL 닫기 ▼" if is_sheet_open else "URL 보기/편집 ▶")
+        action_label = "▼" if is_sheet_open else "▶"
 
-        row_cols = st.columns([0.45, 2.6, 1.6, 2.2], vertical_alignment="center")
+        row_cols = st.columns([0.45, 2.6, 1.6, 0.8], vertical_alignment="center")
         row_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
         row_cols[1].markdown(f"`{sheet_name}`")
         row_cols[2].markdown(status_text)
@@ -584,13 +604,14 @@ def _render_brand_card(*, config_data: dict[str, Any], save_callback: Callable[[
 
         st.markdown("###### + 액티비티 추가")
         add_key = f"add_activity_input_{safe_brand}"
+        _consume_input_reset(add_key)
         add_cols = st.columns([4.5, 1.3], vertical_alignment="center")
         add_cols[0].text_input("액티비티 추가", key=add_key, placeholder="예: Activity 1", label_visibility="collapsed")
         if add_cols[1].button("추가", key=f"add_activity_btn_{safe_brand}", use_container_width=True):
             ok, message = add_activity(config_data, brand_code, st.session_state.get(add_key, ""))
             if ok:
                 save_callback()
-                st.session_state[add_key] = ""
+                _request_input_reset(add_key)
                 _push_management_message(f"✅ {brand_name}에 액티비티를 추가했습니다.", level="success")
                 st.rerun()
             _push_management_message(f"⚠️ {brand_name} 액티비티 추가 실패: {message}", level="warning")
@@ -662,29 +683,48 @@ def render_top_section(
         st.info("등록된 브랜드가 없습니다. 먼저 브랜드를 추가하세요.")
 
     st.markdown("##### + 브랜드 추가")
+    _consume_input_reset("new_brand_name_input")
     add_cols = st.columns([4.5, 1.3], vertical_alignment="center")
     add_cols[0].text_input("브랜드 추가", key="new_brand_name_input", placeholder="예: Brand A", label_visibility="collapsed")
     if add_cols[1].button("추가", key="add_brand_btn", use_container_width=True):
         ok, message = add_brand(config_data, st.session_state.get("new_brand_name_input", ""))
         if ok:
             save_callback()
-            st.session_state["new_brand_name_input"] = ""
+            _request_input_reset("new_brand_name_input")
             _push_management_message("✅ 브랜드를 추가했습니다.", level="success")
             st.rerun()
         _push_management_message(f"⚠️ 브랜드 추가 실패: {message}", level="warning")
 
 
-def render_sidebar_execution_section() -> None:
+def render_sidebar_execution_section(
+    *,
+    on_output_dir_change: Callable[[], None] | None = None,
+    on_downloads_dir_change: Callable[[], None] | None = None,
+    on_logs_dir_change: Callable[[], None] | None = None,
+) -> None:
     with st.sidebar:
         st.subheader("⚙️ Run Settings")
-        st.session_state["browser"] = st.selectbox(
+        st.selectbox(
             "브라우저",
             options=["msedge", "chrome"],
             index=0 if _safe_text(st.session_state.get("browser")) != "chrome" else 1,
+            key="browser",
         )
-        st.session_state["output_dir"] = st.text_input("결과 저장 경로", value=_safe_text(st.session_state.get("output_dir")))
-        st.session_state["downloads_dir"] = st.text_input("다운로드 경로", value=_safe_text(st.session_state.get("downloads_dir")))
-        st.session_state["logs_dir"] = st.text_input("로그 경로", value=_safe_text(st.session_state.get("logs_dir")))
+        st.text_input(
+            "결과 저장 경로",
+            key="output_dir_input",
+            on_change=on_output_dir_change,
+        )
+        st.text_input(
+            "다운로드 경로",
+            key="downloads_dir_input",
+            on_change=on_downloads_dir_change,
+        )
+        st.text_input(
+            "로그 경로",
+            key="logs_dir_input",
+            on_change=on_logs_dir_change,
+        )
 
 
 def render_bottom_section(

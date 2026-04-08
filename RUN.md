@@ -1,37 +1,59 @@
-﻿# Meta Automation Run Guide
+# Meta Automation Run Guide (Module SSOT)
 
-## 1) Local install (dev run)
+`module_source/meta_automation_module` is the source of truth.
+`release_source/meta_automation` is a mirrored runtime target.
+
+## 1) Local install (dev run, from module root)
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r .\build\meta\requirements.meta.runtime.txt
 ```
 
-## 2) Local launch (single user entrypoint)
+## 2) Local launch (actual entrypoint)
 ```powershell
-python main.py
+python -m streamlit run .\app\main.py
 ```
 
 If browser does not open automatically, open `http://localhost:8502`.
 
-## 3) Official EXE build (Meta-only, Streamlit 유지)
-Build must run outside OneDrive sync path.
+## 3) Sync module -> release (from workspace root)
+```powershell
+.\tools\meta_sync.ps1
+.\tools\meta_parity_check.ps1
+```
+
+Equivalent commands from module root:
+```powershell
+..\..\tools\meta_sync.ps1
+..\..\tools\meta_parity_check.ps1
+```
+
+Managed mirror scope:
+- `.streamlit/`
+- `app/`
+- `config/meta/`
+- `dashboard/`
+- `meta_core/`
+- `RUN.md`
+
+Excluded from sync:
+- `_internal/`
+- `logs/`
+- `MyApp.exe`
+- build artifacts
+
+## 4) Official EXE build (from module root)
+Build outside OneDrive/repo path.
 
 ```powershell
 # Optional: force clean venv rebuild
-.\build_meta_release.ps1 -BuildRoot "C:\MetaExportBuild" -CleanVenv
+.\build\meta\build_meta_release.ps1 -BuildRoot "C:\MetaExportBuild" -CleanVenv
 
 # Fast path (reuses build venv)
-.\build_meta_release.ps1 -BuildRoot "C:\MetaExportBuild"
+.\build\meta\build_meta_release.ps1 -BuildRoot "C:\MetaExportBuild"
 ```
-
-What this does:
-1. Stage only required modules (`dashboard`, `meta_core`, launcher, app/config)
-2. Build launcher EXE in onedir mode (`MyApp.exe`, `MyAppDebug.exe`)
-3. Bundle portable Python runtime under `_internal\python_runtime`
-4. Run app via launcher: `python -m streamlit run app/main.py`
-5. Produce final artifacts in repo `dist/` and `release/`
 
 Outputs:
 - `dist\MyApp\MyApp.exe` (final, noconsole)
@@ -39,30 +61,20 @@ Outputs:
 - `release\MyApp_win.zip`
 - `release\MyAppDebug_win.zip`
 
-## 4) Final package runtime layout
-`MyApp_win.zip` contains:
-- `MyApp.exe`
-- `_internal\...` (launcher runtime + python_runtime)
-- `app\main.py`
-- `.streamlit\config.toml`
-- `dashboard\...`
-- `meta_core\...`
-- `config\meta\activity_catalog.json`
-- `config\meta\activity_catalog.example.json`
-- `logs\`
-- `RUN.md`
+## 5) Smoke test
+```powershell
+.\dist\MyApp\MyApp.exe
+```
 
-## 5) User run flow
-1. Unzip `MyApp_win.zip`
-2. Double-click `MyApp.exe`
-3. Browser opens `http://localhost:8502`
-4. Use dashboard for Meta login -> export -> unified workbook
-
-If launch fails, check:
+Check logs:
 - `logs\launcher_*.log`
 - `logs\streamlit_stderr.log`
 
-## 6) Deprecated build paths
-- `build_exe.ps1`: deprecated wrapper (delegates to `build_meta_release.ps1`)
-- `build_myapp.ps1`: deprecated legacy flow (disabled unless `META_ALLOW_LEGACY_BUILD=1`)
-- `meta_ads_auto_export_release.spec`: deprecated for official release build
+Expected launcher flow:
+1. `streamlit_cmd=[..., "-m", "streamlit", "run", "...\app\main.py", ... "--server.port=8502", ...]`
+2. `streamlit_ready host=127.0.0.1 port=8502`
+3. `browser_opened url=http://localhost:8502`
+
+## 6) Deprecated build-kit path
+- `module_source\_build_kit\meta\*.ps1` remains as compatibility wrappers.
+- Preferred path: `module_source\meta_automation_module\build\meta\*.ps1`.

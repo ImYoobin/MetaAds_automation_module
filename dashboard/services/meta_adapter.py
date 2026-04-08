@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable
 
@@ -74,6 +76,31 @@ def _dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
 def _emit(callback: ProgressCallback | None, payload: dict[str, Any]) -> None:
     if callback:
         callback(payload)
+
+
+def _minimize_browser_window(sb: Any, logger: Any) -> bool:
+    driver = getattr(sb, "driver", None)
+    if driver is None:
+        return False
+
+    try:
+        window_info = driver.execute_cdp_cmd("Browser.getWindowForTarget", {})
+        window_id = int(window_info.get("windowId") or 0)
+        if window_id > 0:
+            driver.execute_cdp_cmd(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "minimized"}},
+            )
+            logger.info("browser_window_minimized strategy=cdp")
+            return True
+    except Exception as exc:  # noqa: BLE001
+        logger.info("browser_minimize_cdp_failed reason=%s", exc)
+
+    with suppress(Exception):
+        driver.minimize_window()
+        logger.info("browser_window_minimized strategy=webdriver")
+        return True
+    return False
 
 
 def _emit_row(
@@ -234,6 +261,15 @@ def run_meta_export_with_plan(
     with SB(**sb_kwargs) as sb:
         meta._enable_download_behavior(sb)  # noqa: SLF001
         verify_download_context(meta, watcher_dir=downloads_dir, logger=logger)
+        last_minimize_monotonic = 0.0
+
+        def _ensure_minimized(*, force: bool = False) -> None:
+            nonlocal last_minimize_monotonic
+            now = time.monotonic()
+            if not force and (now - last_minimize_monotonic) < 0.8:
+                return
+            if _minimize_browser_window(sb, logger):
+                last_minimize_monotonic = now
 
         _emit(
             progress_cb,
@@ -253,14 +289,17 @@ def run_meta_export_with_plan(
                 "message": "Meta login confirmed.",
             },
         )
+        _ensure_minimized(force=True)
 
         for activity_plan in plan:
+            _ensure_minimized()
             yymmdd = _now_yymmdd()
             raw_files_by_sheet: dict[str, list[str]] = {}
             activity_errors: list[str] = []
             failed_sheet_names: list[str] = []
 
             for sheet_plan in activity_plan.sheets:
+                _ensure_minimized()
                 row_id = (
                     f"{activity_plan.brand_code}::{activity_plan.activity_name}::{sheet_plan.sheet_display_name}"
                 )
@@ -284,6 +323,7 @@ def run_meta_export_with_plan(
                 first_failures: list[tuple[int, str, str]] = []
 
                 def _export_one(cleaned_url: str, *, index: int, attempt: int) -> str:
+                    _ensure_minimized()
                     parsed = parse_cleaned_url(
                         cleaned_url,
                         default_event_source=view_event_source,

@@ -1,0 +1,3 @@
+-r requirements.meta.runtime.txt
+pyinstaller
+pyinstaller-hooks-contrib
