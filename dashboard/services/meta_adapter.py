@@ -103,6 +103,25 @@ def _minimize_browser_window(sb: Any, logger: Any) -> bool:
     return False
 
 
+def _get_browser_window_state(sb: Any, logger: Any) -> str:
+    driver = getattr(sb, "driver", None)
+    if driver is None:
+        return "unknown"
+    with suppress(Exception):
+        window_info = driver.execute_cdp_cmd("Browser.getWindowForTarget", {})
+        bounds = dict(window_info.get("bounds") or {})
+        state = str(bounds.get("windowState") or "").strip().lower()
+        if state in {"normal", "minimized", "maximized", "fullscreen"}:
+            return state
+    with suppress(Exception):
+        # Fallback path when CDP bounds lookup is unavailable.
+        if driver.execute_script("return document.hidden === true;"):
+            return "minimized"
+    with suppress(Exception):
+        logger.debug("browser_window_state_unknown")
+    return "unknown"
+
+
 def _emit_row(
     callback: ProgressCallback | None,
     *,
@@ -261,15 +280,27 @@ def run_meta_export_with_plan(
     with SB(**sb_kwargs) as sb:
         meta._enable_download_behavior(sb)  # noqa: SLF001
         verify_download_context(meta, watcher_dir=downloads_dir, logger=logger)
-        last_minimize_monotonic = 0.0
+        auto_minimized_once = False
+        user_window_override = False
+        minimize_skip_logged = False
+        logger.info("minimize_policy=post_login_once")
 
-        def _ensure_minimized(*, force: bool = False) -> None:
-            nonlocal last_minimize_monotonic
-            now = time.monotonic()
-            if not force and (now - last_minimize_monotonic) < 0.8:
+        def _apply_minimize_policy(*, on_login: bool = False) -> None:
+            nonlocal auto_minimized_once, user_window_override, minimize_skip_logged
+            if not auto_minimized_once:
+                if not on_login:
+                    return
+                if _minimize_browser_window(sb, logger):
+                    auto_minimized_once = True
                 return
-            if _minimize_browser_window(sb, logger):
-                last_minimize_monotonic = now
+
+            state = _get_browser_window_state(sb, logger)
+            if state in {"normal", "maximized", "fullscreen"} and not user_window_override:
+                user_window_override = True
+                logger.info("user_window_override_detected state=%s", state)
+            if user_window_override and not minimize_skip_logged:
+                logger.info("minimize_skipped_due_to_user_override")
+                minimize_skip_logged = True
 
         _emit(
             progress_cb,
@@ -289,17 +320,17 @@ def run_meta_export_with_plan(
                 "message": "Meta login confirmed.",
             },
         )
-        _ensure_minimized(force=True)
+        _apply_minimize_policy(on_login=True)
 
         for activity_plan in plan:
-            _ensure_minimized()
+            _apply_minimize_policy()
             yymmdd = _now_yymmdd()
             raw_files_by_sheet: dict[str, list[str]] = {}
             activity_errors: list[str] = []
             failed_sheet_names: list[str] = []
 
             for sheet_plan in activity_plan.sheets:
-                _ensure_minimized()
+                _apply_minimize_policy()
                 row_id = (
                     f"{activity_plan.brand_code}::{activity_plan.activity_name}::{sheet_plan.sheet_display_name}"
                 )
@@ -323,7 +354,7 @@ def run_meta_export_with_plan(
                 first_failures: list[tuple[int, str, str]] = []
 
                 def _export_one(cleaned_url: str, *, index: int, attempt: int) -> str:
-                    _ensure_minimized()
+                    _apply_minimize_policy()
                     parsed = parse_cleaned_url(
                         cleaned_url,
                         default_event_source=view_event_source,
