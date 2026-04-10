@@ -523,51 +523,43 @@ class MetaAutomation:
                 raise RuntimeError("Could not confirm Export in modal")
 
     def _is_raw_xlsx_selected(self, sb) -> bool:
-        check_xpaths = [
-            (
-                "//*[contains(@role,'dialog')]"
-                "//*[contains(normalize-space(.),'Raw data table') and contains(normalize-space(.),'.xlsx')]"
-                "/ancestor::*[self::label or self::li or self::div][1]"
-                "//*[@role='radio' and @aria-checked='true']"
-            ),
-            (
-                "//*[contains(@role,'dialog')]"
-                "//*[contains(normalize-space(.),'\uc6d0\uc2dc') and contains(normalize-space(.),'.xlsx')]"
-                "/ancestor::*[self::label or self::li or self::div][1]"
-                "//*[@role='radio' and @aria-checked='true']"
-            ),
-        ]
-        for xp in check_xpaths:
-            with suppress(Exception):
-                if sb.driver.find_elements(By.XPATH, xp):
-                    return True
-
-        # JS fallback check
+        modal_el = self._find_export_modal_element(sb)
         with suppress(Exception):
-            selected = sb.execute_script(
-                """
-                const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')];
-                const dlg = dialogs.find(d => /export/i.test(d.innerText || '')) || dialogs[0] || document;
-                const rows = [...dlg.querySelectorAll('label,li,div,[role="radio"]')];
-                const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-                const isRawXlsx = (t) => ((t.includes('raw data table') || t.includes('?먯떆')) && t.includes('.xlsx'));
-                for (const row of rows) {
-                    const text = norm(row.innerText);
-                    if (!isRawXlsx(text)) continue;
-                    const inputRadio = row.querySelector?.('input[type="radio"]');
-                    if (inputRadio && inputRadio.checked) return true;
-                    const radio =
+            if modal_el:
+                selected = sb.execute_script(
+                    """
+                    const dlg = arguments[0];
+                    const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      const rect = el.getBoundingClientRect();
+                      return rect.width > 0 && rect.height > 0;
+                    };
+                    const rows = [...dlg.querySelectorAll('label, li, div, [role="radio"]')].filter(isVisible);
+                    const isRawXlsx = (t) => (
+                      (t.includes('raw data table') || t.includes('원시')) &&
+                      t.includes('.xlsx')
+                    );
+                    for (const row of rows) {
+                      const text = norm(row.innerText);
+                      if (!isRawXlsx(text)) continue;
+                      const inputRadio = row.querySelector?.('input[type="radio"]');
+                      if (inputRadio && inputRadio.checked) return true;
+                      const radio =
                         (row.getAttribute && row.getAttribute('role') === 'radio' ? row : null) ||
                         row.querySelector?.('[role="radio"]') ||
                         row.closest?.('[role="radio"]');
-                    if (radio && (radio.getAttribute('aria-checked') || '').toLowerCase() === 'true') {
+                      if (radio && (radio.getAttribute('aria-checked') || '').toLowerCase() === 'true') {
                         return true;
+                      }
                     }
-                }
-                return false;
-                """
-            )
-            return bool(selected)
+                    return false;
+                    """,
+                    modal_el,
+                )
+                return bool(selected)
         return False
 
     def _select_raw_xlsx_export_type(self, sb) -> None:
@@ -596,41 +588,53 @@ class MetaAutomation:
         ]
 
         for _ in range(3):
-            clicked = self._click_first_xpath(sb, option_xpaths, timeout=1.8)
+            self._dismiss_notification_overlay(sb, retries=1)
+            clicked = False
+
+            modal_el = self._find_export_modal_element(sb)
+            with suppress(Exception):
+                if modal_el:
+                    clicked = bool(
+                        sb.execute_script(
+                            """
+                            const dlg = arguments[0];
+                            const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                            const isVisible = (el) => {
+                              if (!el) return false;
+                              const style = window.getComputedStyle(el);
+                              if (style.display === 'none' || style.visibility === 'hidden') return false;
+                              const rect = el.getBoundingClientRect();
+                              return rect.width > 0 && rect.height > 0;
+                            };
+                            const rows = [...dlg.querySelectorAll('label,li,div,[role="radio"],span')].filter(isVisible);
+                            const isRawXlsx = (t) => ((t.includes('raw data table') || t.includes('원시')) && t.includes('.xlsx'));
+                            for (const row of rows) {
+                              const text = norm(row.innerText);
+                              if (!isRawXlsx(text)) continue;
+                              const radio =
+                                (row.getAttribute && row.getAttribute('role') === 'radio' ? row : null) ||
+                                row.querySelector?.('[role="radio"]') ||
+                                row.closest?.('[role="radio"]') ||
+                                row;
+                              if (radio && radio.click) {
+                                radio.click();
+                                return true;
+                              }
+                            }
+                            return false;
+                            """,
+                            modal_el,
+                        )
+                    )
+
+            if not clicked:
+                clicked = self._click_first_xpath(sb, option_xpaths, timeout=1.8)
             if not clicked:
                 clicked = (
                     self._safe_click_any_text(sb, "Raw data table (.xlsx)", timeout=1.5)
                     or self._safe_click_any_text(sb, "Raw data table", timeout=1.5)
                     or self._safe_click_any_text(sb, "\uc6d0\uc2dc \ub370\uc774\ud130 \ud14c\uc774\ube14 (.xlsx)", timeout=1.5)
                 )
-
-            if not clicked:
-                with suppress(Exception):
-                    js_clicked = sb.execute_script(
-                        """
-                        const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')];
-                        const dlg = dialogs.find(d => /export/i.test(d.innerText || '')) || dialogs[0];
-                        if (!dlg) return false;
-                        const rows = [...dlg.querySelectorAll('label,li,div,[role="radio"],span')];
-                        const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-                        const isRawXlsx = (t) => ((t.includes('raw data table') || t.includes('?먯떆')) && t.includes('.xlsx'));
-                        for (const row of rows) {
-                            const text = norm(row.innerText);
-                            if (!isRawXlsx(text)) continue;
-                            const radio =
-                                (row.getAttribute && row.getAttribute('role') === 'radio' ? row : null) ||
-                                row.querySelector?.('[role="radio"]') ||
-                                row.closest?.('[role="radio"]') ||
-                                row;
-                            if (radio && radio.click) {
-                                radio.click();
-                                return true;
-                            }
-                        }
-                        return false;
-                        """
-                    )
-                    clicked = bool(js_clicked)
 
             sb.sleep(0.3)
             if clicked and self._is_raw_xlsx_selected(sb):
@@ -1037,24 +1041,9 @@ class MetaAutomation:
             params.append(f"event_source={event_source}")
         return "https://adsmanager.facebook.com/adsmanager/reporting/export?" + "&".join(params)
 
-    def _open_export_modal_from_view(self, sb) -> None:
-        self._dismiss_notification_overlay(sb)
-        xpaths = [
-            "(//button[.//span[normalize-space()='Export']])[1]",
-            "(//button[normalize-space()='Export'])[1]",
-            "(//*[contains(@role,'button')][normalize-space()='Export'])[1]",
-        ]
-        if self._click_first_xpath(sb, xpaths, timeout=2):
-            return
-        if self._safe_click_any_text(sb, "Export", timeout=2):
-            return
-        if self._safe_click_any_text(sb, "\ub0b4\ubcf4\ub0b4\uae30", timeout=2):
-            return
-        raise RuntimeError("Could not click Export button on report view page")
-
-    def _dismiss_notification_overlay(self, sb) -> bool:
+    def _find_export_modal_element(self, sb):
         with suppress(Exception):
-            closed = sb.execute_script(
+            dlg = sb.execute_script(
                 """
                 const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
                 const isVisible = (el) => {
@@ -1068,70 +1057,367 @@ class MetaAutomation:
                   'notifications',
                   'notification',
                   'notificationspreferences',
+                  'notificationsunreadpreferences',
                   'mark all as read',
                   'preferences',
                   '알림',
                   '읽음'
                 ];
-                const looksExportDialog = (text) => (
-                  text.includes('export') ||
-                  text.includes('raw data table') ||
-                  text.includes('export name') ||
-                  text.includes('내보내기')
-                );
+                const exportTokens = [
+                  'export',
+                  'raw data table',
+                  'export name',
+                  'xlsx',
+                  '내보내기',
+                  '원시'
+                ];
+                const hasExportControls = (dlg) => {
+                  if (!dlg) return false;
+                  const hasInput = !!dlg.querySelector('input[type="text"], input:not([type])');
+                  const hasRadio = !!dlg.querySelector('[role="radio"], input[type="radio"]');
+                  const buttons = [...dlg.querySelectorAll('button, [role="button"]')];
+                  const hasExportButton = buttons.some((btn) => {
+                    const label = normalize(
+                      btn.innerText ||
+                      btn.getAttribute('aria-label') ||
+                      btn.getAttribute('title') ||
+                      ''
+                    );
+                    return label === 'export' || label === '내보내기';
+                  });
+                  return hasInput || hasRadio || hasExportButton;
+                };
+                const dialogs = [
+                  ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog"]')
+                ].filter(isVisible);
+                for (let i = dialogs.length - 1; i >= 0; i -= 1) {
+                  const dlg = dialogs[i];
+                  const text = normalize(dlg.innerText || '');
+                  const isNotification = notificationTokens.some((token) => text.includes(token));
+                  const hasControls = hasExportControls(dlg);
+                  const isExportLike = exportTokens.some((token) => text.includes(token)) || hasControls;
+                  if (!isExportLike) continue;
+                  if (isNotification && !hasControls) continue;
+                  return dlg;
+                }
+                return null;
+                """
+            )
+            if dlg:
+                return dlg
+        return None
+
+    def _notification_overlay_present(self, sb) -> bool:
+        with suppress(Exception):
+            present = sb.execute_script(
+                """
+                const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const isVisible = (el) => {
+                  if (!el) return false;
+                  const style = window.getComputedStyle(el);
+                  if (style.display === 'none' || style.visibility === 'hidden') return false;
+                  const rect = el.getBoundingClientRect();
+                  return rect.width > 0 && rect.height > 0;
+                };
+                const notificationTokens = [
+                  'notifications',
+                  'notification',
+                  'notificationspreferences',
+                  'notificationsunreadpreferences',
+                  'mark all as read',
+                  'preferences',
+                  '알림',
+                  '읽음'
+                ];
+                const looksExportDialog = (text, dlg) => {
+                  if (!dlg) return false;
+                  if (
+                    text.includes('export') ||
+                    text.includes('raw data table') ||
+                    text.includes('export name') ||
+                    text.includes('xlsx') ||
+                    text.includes('내보내기') ||
+                    text.includes('원시')
+                  ) {
+                    return true;
+                  }
+                  return !!dlg.querySelector('input[type="text"], [role="radio"], input[type="radio"]');
+                };
 
                 const dialogs = [
                   ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog"]')
-                ].filter(isVisible).reverse();
+                ].filter(isVisible);
                 for (const dlg of dialogs) {
                   const text = normalize(dlg.innerText || '');
                   if (!text) continue;
                   const isNotification = notificationTokens.some((token) => text.includes(token));
-                  if (!isNotification || looksExportDialog(text)) continue;
-                  const controls = [
-                    ...dlg.querySelectorAll('button, [role="button"], [aria-label], [data-testid*="close"]')
-                  ];
-                  for (const control of controls) {
-                    if (!isVisible(control)) continue;
-                    const label = normalize(
-                      control.innerText ||
-                      control.value ||
-                      control.getAttribute('aria-label') ||
-                      control.getAttribute('title') ||
-                      ''
-                    );
-                    if (!label) continue;
-                    const closable = (
-                      label.includes('close') ||
-                      label.includes('dismiss') ||
-                      label.includes('cancel') ||
-                      label.includes('닫기') ||
-                      label === 'x'
-                    );
-                    if (!closable) continue;
-                    control.click();
-                    return true;
-                  }
+                  if (!isNotification) continue;
+                  if (looksExportDialog(text, dlg)) continue;
+                  return true;
                 }
                 return false;
                 """
             )
-            if bool(closed):
-                sb.sleep(0.4)
-                self.logger.info("Dismissed notification overlay before export modal interaction.")
-                return True
+            return bool(present)
         return False
+
+    def _open_export_modal_from_view(self, sb) -> None:
+        if self._find_export_modal_element(sb):
+            return
+        self._dismiss_notification_overlay(sb, retries=2)
+        xpaths = [
+            "(//button[.//span[normalize-space()='Export']])[1]",
+            "(//button[normalize-space()='Export'])[1]",
+            "(//*[contains(@role,'button')][normalize-space()='Export'])[1]",
+        ]
+        if self._click_first_xpath(sb, xpaths, timeout=2):
+            sb.sleep(0.35)
+            if self._find_export_modal_element(sb):
+                return
+        if self._safe_click_any_text(sb, "Export", timeout=2):
+            sb.sleep(0.35)
+            if self._find_export_modal_element(sb):
+                return
+        if self._safe_click_any_text(sb, "\ub0b4\ubcf4\ub0b4\uae30", timeout=2):
+            sb.sleep(0.35)
+            if self._find_export_modal_element(sb):
+                return
+        raise RuntimeError("Could not click Export button on report view page")
+
+    def _dismiss_notification_overlay(self, sb, retries: int = 2) -> bool:
+        dismissed = False
+        max_retries = max(1, int(retries))
+        for _ in range(max_retries):
+            if not self._notification_overlay_present(sb):
+                break
+
+            closed_by_button = False
+            with suppress(Exception):
+                closed_by_button = bool(
+                    sb.execute_script(
+                        """
+                        const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                        const isVisible = (el) => {
+                          if (!el) return false;
+                          const style = window.getComputedStyle(el);
+                          if (style.display === 'none' || style.visibility === 'hidden') return false;
+                          const rect = el.getBoundingClientRect();
+                          return rect.width > 0 && rect.height > 0;
+                        };
+                        const notificationTokens = [
+                          'notifications',
+                          'notification',
+                          'notificationspreferences',
+                          'notificationsunreadpreferences',
+                          'mark all as read',
+                          'preferences',
+                          '알림',
+                          '읽음'
+                        ];
+                        const dialogs = [
+                          ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog"]')
+                        ].filter(isVisible);
+                        for (let i = dialogs.length - 1; i >= 0; i -= 1) {
+                          const dlg = dialogs[i];
+                          const text = normalize(dlg.innerText || '');
+                          const isNotification = notificationTokens.some((token) => text.includes(token));
+                          if (!isNotification) continue;
+                          const controls = [
+                            ...dlg.querySelectorAll('button, [role="button"], [aria-label], [data-testid*="close"]')
+                          ];
+                          for (const control of controls) {
+                            if (!isVisible(control)) continue;
+                            const label = normalize(
+                              control.innerText ||
+                              control.value ||
+                              control.getAttribute('aria-label') ||
+                              control.getAttribute('title') ||
+                              ''
+                            );
+                            const closable = (
+                              label.includes('close') ||
+                              label.includes('dismiss') ||
+                              label.includes('cancel') ||
+                              label.includes('닫기') ||
+                              label === 'x'
+                            );
+                            if (!closable) continue;
+                            control.click();
+                            return true;
+                          }
+                        }
+                        return false;
+                        """
+                    )
+                )
+            if closed_by_button:
+                dismissed = True
+                sb.sleep(0.25)
+            if not self._notification_overlay_present(sb):
+                break
+
+            with suppress(Exception):
+                sb.execute_script(
+                    """
+                    const targets = [document.activeElement, document.body, document.documentElement, window].filter(Boolean);
+                    for (const t of targets) {
+                      const event = new KeyboardEvent('keydown', {
+                        key: 'Escape',
+                        code: 'Escape',
+                        keyCode: 27,
+                        which: 27,
+                        bubbles: true,
+                      });
+                      t.dispatchEvent(event);
+                    }
+                    """
+                )
+            sb.sleep(0.2)
+            if not self._notification_overlay_present(sb):
+                dismissed = True
+                break
+
+            toggled_bell = False
+            with suppress(Exception):
+                toggled_bell = bool(
+                    sb.execute_script(
+                        """
+                        const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                        const isVisible = (el) => {
+                          if (!el) return false;
+                          const style = window.getComputedStyle(el);
+                          if (style.display === 'none' || style.visibility === 'hidden') return false;
+                          const rect = el.getBoundingClientRect();
+                          return rect.width > 0 && rect.height > 0;
+                        };
+                        const nodes = [
+                          ...document.querySelectorAll('button, [role="button"], [aria-label], [title], [data-testid]')
+                        ];
+                        for (const node of nodes) {
+                          if (!isVisible(node)) continue;
+                          const label = normalize(
+                            node.innerText ||
+                            node.getAttribute('aria-label') ||
+                            node.getAttribute('title') ||
+                            node.getAttribute('data-tooltip-content') ||
+                            node.getAttribute('data-testid') ||
+                            ''
+                          );
+                          if (!label) continue;
+                          const isBellLike = (
+                            label.includes('notification') ||
+                            label.includes('notifications') ||
+                            label.includes('unread') ||
+                            label.includes('inbox') ||
+                            label.includes('알림')
+                          );
+                          if (!isBellLike || label.includes('mark all as read')) continue;
+                          node.click();
+                          return true;
+                        }
+                        return false;
+                        """
+                    )
+                )
+            if toggled_bell:
+                sb.sleep(0.25)
+            if not self._notification_overlay_present(sb):
+                dismissed = True
+                break
+
+            clicked_backdrop = False
+            with suppress(Exception):
+                clicked_backdrop = bool(
+                    sb.execute_script(
+                        """
+                        const isVisible = (el) => {
+                          if (!el) return false;
+                          const style = window.getComputedStyle(el);
+                          if (style.display === 'none' || style.visibility === 'hidden') return false;
+                          const rect = el.getBoundingClientRect();
+                          return rect.width > 0 && rect.height > 0;
+                        };
+                        const dialogs = [
+                          ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog"]')
+                        ].filter(isVisible);
+                        const targetDialog = dialogs[dialogs.length - 1];
+                        let clickX = 8;
+                        let clickY = 8;
+                        if (targetDialog) {
+                          const rect = targetDialog.getBoundingClientRect();
+                          clickX = Math.max(2, Math.min(window.innerWidth - 2, rect.left - 12));
+                          clickY = Math.max(2, Math.min(window.innerHeight - 2, rect.top + 12));
+                        }
+                        const target = document.elementFromPoint(clickX, clickY) || document.body;
+                        if (!target) return false;
+                        const down = new MouseEvent('mousedown', { bubbles: true, clientX: clickX, clientY: clickY });
+                        const up = new MouseEvent('mouseup', { bubbles: true, clientX: clickX, clientY: clickY });
+                        const click = new MouseEvent('click', { bubbles: true, clientX: clickX, clientY: clickY });
+                        target.dispatchEvent(down);
+                        target.dispatchEvent(up);
+                        target.dispatchEvent(click);
+                        return true;
+                        """
+                    )
+                )
+            if clicked_backdrop:
+                sb.sleep(0.25)
+            if not self._notification_overlay_present(sb):
+                dismissed = True
+                break
+
+        if dismissed:
+            self.logger.info("Dismissed notification overlay before export modal interaction.")
+        elif self._notification_overlay_present(sb):
+            self.logger.warning("Notification overlay still visible after dismissal attempts.")
+        return dismissed
 
     def _set_export_name_in_modal(self, sb, export_name: str) -> None:
         target = str(export_name or "").strip()
         if not target:
             return
 
+        modal_el = self._find_export_modal_element(sb)
+        with suppress(Exception):
+            if modal_el:
+                ok = sb.execute_script(
+                    """
+                    const dlg = arguments[0];
+                    const target = (arguments[1] || '').trim();
+                    if (!dlg || !target) return false;
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      const rect = el.getBoundingClientRect();
+                      return rect.width > 0 && rect.height > 0;
+                    };
+                    const inputs = [...dlg.querySelectorAll('input[type="text"], input:not([type])')].filter(isVisible);
+                    if (!inputs.length) return false;
+                    const preferred = inputs.find((input) => {
+                      const aria = (input.getAttribute('aria-label') || '').toLowerCase();
+                      const name = (input.getAttribute('name') || '').toLowerCase();
+                      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+                      return aria.includes('export') || name.includes('export') || placeholder.includes('export');
+                    }) || inputs[0];
+                    preferred.focus();
+                    preferred.value = '';
+                    preferred.dispatchEvent(new Event('input', { bubbles: true }));
+                    preferred.value = target;
+                    preferred.dispatchEvent(new Event('input', { bubbles: true }));
+                    preferred.dispatchEvent(new Event('change', { bubbles: true }));
+                    return (preferred.value || '').trim() === target;
+                    """,
+                    modal_el,
+                    target,
+                )
+                if bool(ok):
+                    return
+
         input_xpaths = [
             "(//*[contains(@role,'dialog')][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export') or contains(normalize-space(.),'\ub0b4\ubcf4\ub0b4\uae30')]//input[@type='text'])[1]",
-            "(//*[contains(@role,'dialog')]//input[@type='text'])[1]",
-            "(//*[contains(@aria-label,'Export name')]//input)[1]",
-            "(//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export name')]/following::input[1])[1]",
+            "(//*[contains(@role,'dialog')][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export name') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'raw data table')]//input[@type='text'])[1]",
+            "(//*[contains(@role,'dialog')][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'xlsx')]//input[@type='text'])[1]",
         ]
         for xp in input_xpaths:
             try:
@@ -1140,28 +1426,6 @@ class MetaAutomation:
                 return
             except Exception:
                 continue
-
-        with suppress(Exception):
-            ok = sb.execute_script(
-                """
-                const target = arguments[0];
-                const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')];
-                const dlg = dialogs.find((d) => /export|내보내기/i.test(d.innerText || '')) || dialogs[0] || document;
-                const inputs = [...dlg.querySelectorAll('input[type="text"], input:not([type])')];
-                if (!inputs.length) return false;
-                const input = inputs[0];
-                input.focus();
-                input.value = '';
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.value = target;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-                return true;
-                """,
-                target,
-            )
-            if ok:
-                return
         self.logger.warning("Could not set export name in modal. Continue with existing name.")
 
     def _wait_xlsx_download(self, sb, pre_ts: float, timeout: Optional[int] = None) -> str:
@@ -1374,11 +1638,49 @@ class MetaAutomation:
         )
 
     def _confirm_export_in_modal(self, sb) -> None:
+        modal_el = self._find_export_modal_element(sb)
+        with suppress(Exception):
+            if modal_el:
+                clicked = sb.execute_script(
+                    """
+                    const dlg = arguments[0];
+                    const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      const rect = el.getBoundingClientRect();
+                      return rect.width > 0 && rect.height > 0;
+                    };
+                    const controls = [...dlg.querySelectorAll('button, [role="button"]')].filter(isVisible);
+                    for (const control of controls) {
+                      const label = normalize(
+                        control.innerText ||
+                        control.getAttribute('aria-label') ||
+                        control.getAttribute('title') ||
+                        ''
+                      );
+                      const disabled = (
+                        control.hasAttribute('disabled') ||
+                        String(control.getAttribute('aria-disabled') || '').toLowerCase() === 'true'
+                      );
+                      if (disabled) continue;
+                      if (label === 'export' || label === '내보내기') {
+                        control.click();
+                        return true;
+                      }
+                    }
+                    return false;
+                    """,
+                    modal_el,
+                )
+                if bool(clicked):
+                    return
+
         dialog_export_xpaths = [
             "(//*[contains(@role,'dialog')]//button[.//span[normalize-space()='Export']])[1]",
             "(//*[contains(@role,'dialog')]//button[normalize-space()='Export'])[1]",
             "(//*[contains(@role,'dialog')]//*[contains(@role,'button')][normalize-space()='Export'])[1]",
-            "(//button[normalize-space()='Export'])[last()]",
         ]
         if self._click_first_xpath(sb, dialog_export_xpaths, timeout=2):
             return
@@ -1544,16 +1846,80 @@ class MetaAutomation:
 
     def _extract_modal_text(self, sb, max_chars: int = 1000) -> str:
         with suppress(Exception):
-            text = sb.execute_script(
+            payload = sb.execute_script(
                 """
-                const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')];
-                if (!dialogs.length) return '';
-                const text = (dialogs[dialogs.length - 1].innerText || '').replace(/\\s+/g, ' ').trim();
-                return text.slice(0, arguments[0]);
+                const maxChars = Number(arguments[0] || 1000);
+                const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+                const lower = (value) => normalize(value).toLowerCase();
+                const isVisible = (el) => {
+                  if (!el) return false;
+                  const style = window.getComputedStyle(el);
+                  if (style.display === 'none' || style.visibility === 'hidden') return false;
+                  const rect = el.getBoundingClientRect();
+                  return rect.width > 0 && rect.height > 0;
+                };
+                const notificationTokens = [
+                  'notifications',
+                  'notification',
+                  'notificationspreferences',
+                  'notificationsunreadpreferences',
+                  'mark all as read',
+                  'preferences',
+                  '알림',
+                  '읽음'
+                ];
+                const classify = (dlg) => {
+                  const text = lower(dlg.innerText || '');
+                  const isNotification = notificationTokens.some((token) => text.includes(token));
+                  const isExport = (
+                    text.includes('export') ||
+                    text.includes('raw data table') ||
+                    text.includes('export name') ||
+                    text.includes('xlsx') ||
+                    text.includes('내보내기') ||
+                    text.includes('원시') ||
+                    !!dlg.querySelector('input[type="text"], [role="radio"], input[type="radio"]')
+                  );
+                  if (isExport && !isNotification) return 'export';
+                  if (isExport && isNotification) return 'mixed';
+                  if (isNotification) return 'notification';
+                  return 'unknown';
+                };
+
+                const dialogs = [
+                  ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog"]')
+                ].filter(isVisible);
+                if (!dialogs.length) return { kind: 'none', text: '' };
+
+                let exportDialog = null;
+                for (let i = dialogs.length - 1; i >= 0; i -= 1) {
+                  const dlg = dialogs[i];
+                  const kind = classify(dlg);
+                  if (kind === 'export' || kind === 'mixed') {
+                    exportDialog = dlg;
+                    break;
+                  }
+                }
+                if (exportDialog) {
+                  return {
+                    kind: classify(exportDialog),
+                    text: normalize(exportDialog.innerText || '').slice(0, maxChars),
+                  };
+                }
+                const top = dialogs[dialogs.length - 1];
+                return {
+                  kind: classify(top),
+                  text: normalize(top.innerText || '').slice(0, maxChars),
+                };
                 """,
                 int(max_chars),
             )
-            return str(text or "").strip()
+            if isinstance(payload, dict):
+                kind = str(payload.get("kind") or "unknown").strip().lower() or "unknown"
+                text = str(payload.get("text") or "").strip()
+                if text:
+                    return f"type={kind} text={text}"
+                return f"type={kind}"
         return ""
 
     def _capture_stage_failure_evidence(
@@ -1764,11 +2130,42 @@ class MetaAutomation:
         if not expected:
             return False
 
+        modal_el = self._find_export_modal_element(sb)
+        with suppress(Exception):
+            if modal_el:
+                is_set = sb.execute_script(
+                    """
+                    const dlg = arguments[0];
+                    const expected = (arguments[1] || '').trim();
+                    if (!dlg || !expected) return false;
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      const rect = el.getBoundingClientRect();
+                      return rect.width > 0 && rect.height > 0;
+                    };
+                    const inputs = [...dlg.querySelectorAll('input[type="text"], input:not([type])')].filter(isVisible);
+                    if (!inputs.length) return false;
+                    const preferred = inputs.find((input) => {
+                      const aria = (input.getAttribute('aria-label') || '').toLowerCase();
+                      const name = (input.getAttribute('name') || '').toLowerCase();
+                      const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+                      return aria.includes('export') || name.includes('export') || placeholder.includes('export');
+                    }) || inputs[0];
+                    const val = (preferred.value || '').trim();
+                    return val === expected;
+                    """,
+                    modal_el,
+                    expected,
+                )
+                if bool(is_set):
+                    return True
+
         input_xpaths = [
             "(//*[contains(@role,'dialog')][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export') or contains(normalize-space(.),'\ub0b4\ubcf4\ub0b4\uae30')]//input[@type='text'])[1]",
-            "(//*[contains(@role,'dialog')]//input[@type='text'])[1]",
-            "(//*[contains(@aria-label,'Export name')]//input)[1]",
-            "(//*[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export name')]/following::input[1])[1]",
+            "(//*[contains(@role,'dialog')][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export name') or contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'raw data table')]//input[@type='text'])[1]",
+            "(//*[contains(@role,'dialog')][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'xlsx')]//input[@type='text'])[1]",
         ]
         for xp in input_xpaths:
             with suppress(Exception):
@@ -1777,24 +2174,6 @@ class MetaAutomation:
                 if val == expected:
                     return True
 
-        with suppress(Exception):
-            is_set = sb.execute_script(
-                """
-                const expected = (arguments[0] || '').trim();
-                if (!expected) return false;
-                const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')];
-                const dlg =
-                  dialogs.find((d) => /export|내보내기/i.test(d.innerText || '')) ||
-                  dialogs[dialogs.length - 1] ||
-                  document;
-                const inputs = [...dlg.querySelectorAll('input[type="text"], input:not([type])')];
-                if (!inputs.length) return false;
-                const val = (inputs[0].value || '').trim();
-                return val === expected;
-                """,
-                expected,
-            )
-            return bool(is_set)
         return False
 
     def _wait_export_acceptance_signal(self, sb, timeout: Optional[int] = None) -> Optional[str]:
@@ -1805,22 +2184,14 @@ class MetaAutomation:
             "//*[(@role='alert' or @aria-live='polite' or @aria-live='assertive') and (contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export') or contains(normalize-space(.),'\ub0b4\ubcf4\ub0b4\uae30'))]",
             "//*[contains(normalize-space(.),'\ub0b4\ubcf4\ub0b4\uae30') and (contains(normalize-space(.),'\uc644\ub8cc') or contains(normalize-space(.),'\uc694\uccad') or contains(normalize-space(.),'\uc2dc\uc791'))]",
         ]
-        export_dialog_xpath = (
-            "//*[contains(@role,'dialog')]"
-            "[contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'export')"
-            " or contains(normalize-space(.),'\ub0b4\ubcf4\ub0b4\uae30')]"
-        )
-
         while time.time() - start <= wait_timeout:
             for xp in toast_xpaths:
                 with suppress(Exception):
                     if sb.driver.find_elements(By.XPATH, xp):
                         return "toast"
 
-            with suppress(Exception):
-                dialogs = sb.driver.find_elements(By.XPATH, export_dialog_xpath)
-                if not dialogs:
-                    return "modal_closed"
+            if not self._find_export_modal_element(sb):
+                return "modal_closed"
 
             sb.sleep(1)
 
@@ -1883,24 +2254,77 @@ class MetaAutomation:
         export_name: str,
     ) -> ExportResult:
         self.logger.info("%s Trigger export: brand=%s report=%s export_name=%s", stage_tag, brand_cfg["brand_ko"], report_name, export_name)
-        self._dismiss_notification_overlay(sb)
-        self._open_export_modal_from_view(sb)
-        self._dismiss_notification_overlay(sb)
-        self._set_export_name_in_modal(sb, export_name)
-        if not self._is_export_name_set(sb, export_name):
-            self._dismiss_notification_overlay(sb)
-            self._set_export_name_in_modal(sb, export_name)
-            if not self._is_export_name_set(sb, export_name):
+        max_rounds = 3
+        for round_idx in range(1, max_rounds + 1):
+            self._dismiss_notification_overlay(sb, retries=2)
+            if not self._find_export_modal_element(sb):
+                self._open_export_modal_from_view(sb)
+            self._dismiss_notification_overlay(sb, retries=2)
+
+            if not self._find_export_modal_element(sb):
+                self.logger.warning(
+                    "%s Export modal not ready. round=%s/%s report=%s",
+                    stage_tag,
+                    round_idx,
+                    max_rounds,
+                    report_name,
+                )
+                if round_idx < max_rounds:
+                    sb.sleep(0.5)
+                    continue
                 modal_text = self._extract_modal_text(sb, max_chars=200)
                 if modal_text:
                     raise RuntimeError(
-                        f"Could not verify export name in modal: {export_name} | modal={modal_text}"
+                        f"Could not locate export modal for export name set: {export_name} | modal={modal_text}"
                     )
-                raise RuntimeError(f"Could not verify export name in modal: {export_name}")
+                raise RuntimeError(f"Could not locate export modal for export name set: {export_name}")
+
+            self._set_export_name_in_modal(sb, export_name)
+            if self._is_export_name_set(sb, export_name):
+                break
+
+            self.logger.warning(
+                "%s Export name verify retry. round=%s/%s report=%s",
+                stage_tag,
+                round_idx,
+                max_rounds,
+                report_name,
+            )
+            if round_idx < max_rounds:
+                sb.sleep(0.4)
+                continue
+
+            modal_text = self._extract_modal_text(sb, max_chars=200)
+            if modal_text:
+                raise RuntimeError(
+                    f"Could not verify export name in modal: {export_name} | modal={modal_text}"
+                )
+            raise RuntimeError(f"Could not verify export name in modal: {export_name}")
+
+        self._dismiss_notification_overlay(sb, retries=1)
         self._select_raw_xlsx_export_type(sb)
 
         request_ts = time.time()
-        self._confirm_export_in_modal(sb)
+        confirm_error: Optional[Exception] = None
+        for confirm_round in range(1, 3):
+            self._dismiss_notification_overlay(sb, retries=1)
+            try:
+                self._confirm_export_in_modal(sb)
+                confirm_error = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                confirm_error = exc
+                self.logger.warning(
+                    "%s Export confirm retry. round=%s/2 report=%s",
+                    stage_tag,
+                    confirm_round,
+                    report_name,
+                )
+                if confirm_round < 2:
+                    sb.sleep(0.4)
+        if confirm_error is not None:
+            raise confirm_error
+
         signal = self._wait_export_acceptance_signal(sb)
         if not signal:
             raise TimeoutError("No export acceptance signal detected after Export click")
