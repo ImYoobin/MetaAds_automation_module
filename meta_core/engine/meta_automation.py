@@ -24,6 +24,7 @@ class ExportResult:
     export_name: str
     request_ts: float
     report_name: str
+    accepted_export_name: str = ""
 
 
 @dataclass
@@ -66,6 +67,8 @@ class ExportTicket:
     toast_transition_seen: bool = False
     toast_wait_elapsed_ms: int = 0
     file_signal_detected_at: str = ""
+    accepted_export_name: str = ""
+    search_queries: Optional[List[str]] = None
 
 
 @dataclass
@@ -278,6 +281,84 @@ class MetaAutomation:
                     out.append(name_with_ext)
         return out
 
+    def _extract_export_name_from_toast_text(self, toast_text: str) -> str:
+        text = str(toast_text or "").replace("\u200b", " ")
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return ""
+
+        # Prefer explicit [Report]... tokens that Meta shows in toast.
+        bracket_match = re.search(
+            r"(\[[^\]]+\][^\\n\\r]*?)(?:\s+\(\d{1,3}%\))?(?:\s+(?:view all|close)\b|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if bracket_match:
+            extracted = re.sub(r"\s+", " ", bracket_match.group(1)).strip(" -:")
+            extracted = re.sub(r"\s+\(\d{1,3}%\)$", "", extracted).strip()
+            return extracted
+
+        # Fallback: capture phrase between readiness token and trailing CTA text.
+        generic_match = re.search(
+            r"(?:your export is ready|export is ready|creating export|내보내기 준비|내보내기 완료)\s+(.+?)(?:\s+(?:view all|close)\b|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if generic_match:
+            extracted = re.sub(r"\s+", " ", generic_match.group(1)).strip(" -:")
+            extracted = re.sub(r"\s+\(\d{1,3}%\)$", "", extracted).strip()
+            return extracted
+        return ""
+
+    def _build_history_search_queries(
+        self,
+        *,
+        export_name: str,
+        report_name: str,
+        accepted_export_name: str = "",
+    ) -> List[str]:
+        out: List[str] = []
+
+        def _add(value: str) -> None:
+            val = str(value or "").replace("\u200b", " ")
+            val = re.sub(r"\s+", " ", val).strip()
+            if val and val not in out:
+                out.append(val)
+
+        requested = str(export_name or "").strip()
+        accepted = str(accepted_export_name or "").strip()
+        report = str(report_name or "").strip()
+
+        _add(requested)
+        _add(accepted)
+
+        for candidate in (accepted, requested):
+            if not candidate:
+                continue
+            match = re.search(r"(\[[^\]]+\][^\\n\\r]*)", candidate)
+            if match:
+                _add(match.group(1))
+            stem = re.sub(r"\.xlsx$", "", candidate, flags=re.IGNORECASE).strip()
+            _add(stem)
+
+        if report:
+            report_variants = self._report_name_variants(report)
+            for rep in report_variants:
+                _add(rep)
+                _add(f"[{rep}]")
+
+        # Add compact tokens as a last-resort fallback search key.
+        for source_name in (accepted, requested):
+            if not source_name:
+                continue
+            parts = [part for part in re.split(r"[_\s]+", source_name) if part]
+            if len(parts) >= 2:
+                _add(parts[1])
+            if len(parts) >= 3:
+                _add(parts[-1])
+
+        return out[:10]
+
     def _merge_error_reason(self, existing: str, new_reason: str) -> str:
         old_val = str(existing or "").strip()
         new_val = str(new_reason or "").strip()
@@ -317,6 +398,20 @@ class MetaAutomation:
                         return True
             try:
                 sb.click(xp, timeout=timeout)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _click_first_css(self, sb, selectors: List[str], timeout: float = 1.5) -> bool:
+        for sel in selectors:
+            with suppress(Exception):
+                elements = sb.driver.find_elements(By.CSS_SELECTOR, sel)
+                for element in elements:
+                    if self._click_element_with_fallback(sb=sb, element=element):
+                        return True
+            try:
+                sb.click(sel, by=By.CSS_SELECTOR, timeout=timeout)
                 return True
             except Exception:
                 continue
@@ -537,6 +632,10 @@ class MetaAutomation:
                       const rect = el.getBoundingClientRect();
                       return rect.width > 0 && rect.height > 0;
                     };
+                    const directRadio = dlg.querySelector('input[type="radio"][value="xlsx"]');
+                    if (directRadio && directRadio.checked) return true;
+                    const directRole = dlg.querySelector('[role="radio"][data-value="xlsx"], [role="radio"][value="xlsx"]');
+                    if (directRole && (directRole.getAttribute('aria-checked') || '').toLowerCase() === 'true') return true;
                     const rows = [...dlg.querySelectorAll('label, li, div, [role="radio"]')].filter(isVisible);
                     const isRawXlsx = (t) => (
                       (t.includes('raw data table') || t.includes('원시')) &&
@@ -564,6 +663,10 @@ class MetaAutomation:
 
     def _select_raw_xlsx_export_type(self, sb) -> None:
         option_xpaths = [
+            "(//*[contains(@role,'dialog')]//input[@type='radio' and @value='xlsx'])[1]",
+            "(//input[@type='radio' and @value='xlsx'])[1]",
+            "(//*[contains(@role,'dialog')]//input[@type='radio' and @value='xlsx']/ancestor::label[1])[1]",
+            "(//input[@type='radio' and @value='xlsx']/ancestor::label[1])[1]",
             # Click radio control nearest to exact label first.
             (
                 "(//*[contains(@role,'dialog')]//*[normalize-space()='Raw data table (.xlsx)']"
@@ -608,6 +711,13 @@ class MetaAutomation:
                             };
                             const rows = [...dlg.querySelectorAll('label,li,div,[role="radio"],span')].filter(isVisible);
                             const isRawXlsx = (t) => ((t.includes('raw data table') || t.includes('원시')) && t.includes('.xlsx'));
+                            const directRadio = dlg.querySelector('input[type="radio"][value="xlsx"]');
+                            if (directRadio) {
+                              directRadio.click();
+                              directRadio.dispatchEvent(new Event('input', { bubbles: true }));
+                              directRadio.dispatchEvent(new Event('change', { bubbles: true }));
+                              return true;
+                            }
                             for (const row of rows) {
                               const text = norm(row.innerText);
                               if (!isRawXlsx(text)) continue;
@@ -1071,10 +1181,25 @@ class MetaAutomation:
                   '내보내기',
                   '원시'
                 ];
+                const isNotificationFlyout = (dlg) => {
+                  if (!dlg) return false;
+                  const id = String(dlg.id || '').toLowerCase();
+                  if (id === 'fbnotificationsflyout') return true;
+                  const cls = String(dlg.className || '').toLowerCase();
+                  return cls.includes('uitoggleflyout');
+                };
+                const labelledText = (dlg) => {
+                  if (!dlg) return '';
+                  const labelledBy = String(dlg.getAttribute('aria-labelledby') || '').trim();
+                  if (!labelledBy) return '';
+                  const titleEl = document.getElementById(labelledBy);
+                  return normalize(titleEl ? titleEl.innerText : '');
+                };
                 const hasExportControls = (dlg) => {
                   if (!dlg) return false;
                   const hasInput = !!dlg.querySelector('input[type="text"], input:not([type])');
-                  const hasRadio = !!dlg.querySelector('[role="radio"], input[type="radio"]');
+                  const hasRadio = !!dlg.querySelector('[role="radio"], input[type="radio"], input[type="radio"][value="xlsx"]');
+                  const hasXlsx = !!dlg.querySelector('input[type="radio"][value="xlsx"]');
                   const buttons = [...dlg.querySelectorAll('button, [role="button"]')];
                   const hasExportButton = buttons.some((btn) => {
                     const label = normalize(
@@ -1083,21 +1208,32 @@ class MetaAutomation:
                       btn.getAttribute('title') ||
                       ''
                     );
-                    return label === 'export' || label === '내보내기';
+                    const surf = normalize(btn.getAttribute('data-surface') || '');
+                    return label === 'export' || label === '내보내기' || surf.includes('export-confirm-button');
                   });
-                  return hasInput || hasRadio || hasExportButton;
+                  return {
+                    hasInput,
+                    hasRadio,
+                    hasXlsx,
+                    hasExportButton,
+                    any: hasInput || hasRadio || hasExportButton,
+                  };
                 };
                 const dialogs = [
                   ...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog"]')
                 ].filter(isVisible);
                 for (let i = dialogs.length - 1; i >= 0; i -= 1) {
                   const dlg = dialogs[i];
+                  if (isNotificationFlyout(dlg)) continue;
                   const text = normalize(dlg.innerText || '');
+                  const label = labelledText(dlg);
+                  const controls = hasExportControls(dlg);
                   const isNotification = notificationTokens.some((token) => text.includes(token));
-                  const hasControls = hasExportControls(dlg);
-                  const isExportLike = exportTokens.some((token) => text.includes(token)) || hasControls;
+                  const looksByLabel = label === 'export report';
+                  const looksByText = exportTokens.some((token) => text.includes(token));
+                  const isExportLike = looksByLabel || (looksByText && controls.any) || (controls.hasInput && controls.hasXlsx);
                   if (!isExportLike) continue;
-                  if (isNotification && !hasControls) continue;
+                  if (isNotification && !looksByLabel && !controls.hasXlsx) continue;
                   return dlg;
                 }
                 return null;
@@ -1164,25 +1300,218 @@ class MetaAutomation:
     def _open_export_modal_from_view(self, sb) -> None:
         if self._find_export_modal_element(sb):
             return
-        self._dismiss_notification_overlay(sb, retries=2)
+        timeout_sec = max(2.0, float(self.meta_config.get("view_export_trigger_timeout_sec", 8.0)))
+        deadline = time.time() + timeout_sec
+        css_selectors = [
+            "[data-surface='/am/lib:export_button']",
+            "[role='button'][data-surface*='export_button']",
+            "div[role='button'][data-surface*='export_button']",
+        ]
         xpaths = [
+            "(//div[@data-surface='/am/lib:export_button'])[1]",
+            "(//*[@role='button' and contains(@data-surface,'export_button')])[1]",
             "(//button[.//span[normalize-space()='Export']])[1]",
             "(//button[normalize-space()='Export'])[1]",
             "(//*[contains(@role,'button')][normalize-space()='Export'])[1]",
         ]
-        if self._click_first_xpath(sb, xpaths, timeout=2):
-            sb.sleep(0.35)
+        while time.time() <= deadline:
+            self._dismiss_notification_overlay(sb, retries=2)
             if self._find_export_modal_element(sb):
                 return
-        if self._safe_click_any_text(sb, "Export", timeout=2):
-            sb.sleep(0.35)
-            if self._find_export_modal_element(sb):
-                return
-        if self._safe_click_any_text(sb, "\ub0b4\ubcf4\ub0b4\uae30", timeout=2):
-            sb.sleep(0.35)
-            if self._find_export_modal_element(sb):
-                return
+            clicked = False
+            if self._click_first_css(sb, css_selectors, timeout=1.2):
+                clicked = True
+                self.logger.info("view_export_trigger_clicked strategy=data_surface")
+            elif self._click_first_xpath(sb, xpaths, timeout=1.2):
+                clicked = True
+                self.logger.info("view_export_trigger_clicked strategy=xpath")
+            elif self._safe_click_any_text(sb, "Export", timeout=1.0):
+                clicked = True
+                self.logger.info("view_export_trigger_clicked strategy=text_en")
+            elif self._safe_click_any_text(sb, "\ub0b4\ubcf4\ub0b4\uae30", timeout=1.0):
+                clicked = True
+                self.logger.info("view_export_trigger_clicked strategy=text_ko")
+            else:
+                with suppress(Exception):
+                    clicked = bool(
+                        sb.execute_script(
+                            """
+                            const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                            const isVisible = (el) => {
+                              if (!el) return false;
+                              const style = window.getComputedStyle(el);
+                              if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') return false;
+                              const rect = el.getBoundingClientRect();
+                              return rect.width > 0 && rect.height > 0;
+                            };
+                            const isEnabled = (el) => {
+                              if (!el) return false;
+                              const ariaDisabled = normalize(el.getAttribute('aria-disabled') || '');
+                              const ariaBusy = normalize(el.getAttribute('aria-busy') || '');
+                              const hasDisabled = el.hasAttribute && el.hasAttribute('disabled');
+                              const cls = normalize(el.getAttribute('class') || '');
+                              return ariaDisabled !== 'true' && ariaBusy !== 'true' && !hasDisabled && !cls.includes('disabled');
+                            };
+                            const shouldSkip = (el) => {
+                              if (!el) return true;
+                              if (el.closest('#fbNotificationsFlyout')) return true;
+                              if (el.closest('[role="dialog"]')) return true;
+                              if (el.closest('[role="menuitem"]')) return true;
+                              const surface = normalize(el.getAttribute('data-surface') || '');
+                              if (surface.includes('export-confirm-button')) return true;
+                              if (normalize(el.getAttribute('aria-haspopup') || '') === 'menu') return true;
+                              return false;
+                            };
+                            const selectors = [
+                              "[data-surface='/am/lib:export_button']",
+                              "[role='button'][data-surface*='export_button']",
+                              "[data-surface*='export_button']"
+                            ];
+                            const candidates = [];
+                            const seen = new Set();
+                            for (const sel of selectors) {
+                              for (const node of document.querySelectorAll(sel)) {
+                                const key = normalize(node.getAttribute('data-surface') || '') + '|' + normalize(node.innerText || '');
+                                if (seen.has(key)) continue;
+                                seen.add(key);
+                                if (shouldSkip(node)) continue;
+                                if (!isVisible(node) || !isEnabled(node)) continue;
+                                candidates.push(node);
+                              }
+                            }
+                            if (!candidates.length) return false;
+                            candidates.sort((a, b) => {
+                              const aSurf = normalize(a.getAttribute('data-surface') || '');
+                              const bSurf = normalize(b.getAttribute('data-surface') || '');
+                              const aScore = aSurf === '/am/lib:export_button' ? 0 : 1;
+                              const bScore = bSurf === '/am/lib:export_button' ? 0 : 1;
+                              if (aScore !== bScore) return aScore - bScore;
+                              const ar = a.getBoundingClientRect();
+                              const br = b.getBoundingClientRect();
+                              if (Math.abs(ar.top - br.top) > 2) return ar.top - br.top;
+                              return ar.left - br.left;
+                            });
+                            const target = candidates[0];
+                            try { target.click(); return true; } catch (_err) {}
+                            const rect = target.getBoundingClientRect();
+                            const x = Math.floor(rect.left + Math.max(4, rect.width / 2));
+                            const y = Math.floor(rect.top + Math.max(4, rect.height / 2));
+                            ['mousedown', 'mouseup', 'click'].forEach((evtName) => {
+                              target.dispatchEvent(new MouseEvent(evtName, { bubbles: true, clientX: x, clientY: y }));
+                            });
+                            return true;
+                            """
+                        )
+                    )
+                    if clicked:
+                        self.logger.info("view_export_trigger_clicked strategy=js_data_surface")
+            if clicked:
+                sb.sleep(0.35)
+                if self._find_export_modal_element(sb):
+                    return
+            sb.sleep(0.2)
+
+        with suppress(Exception):
+            probe = self._probe_view_export_trigger_candidates(sb=sb)
+            if probe:
+                self.logger.warning("view_export_trigger_probe=%s", probe)
         raise RuntimeError("Could not click Export button on report view page")
+
+    def _probe_view_export_trigger_candidates(self, sb) -> str:
+        with suppress(Exception):
+            payload = sb.execute_script(
+                """
+                const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+                const lower = (value) => normalize(value).toLowerCase();
+                const isVisible = (el) => {
+                  if (!el) return false;
+                  const style = window.getComputedStyle(el);
+                  if (style.display === 'none' || style.visibility === 'hidden') return false;
+                  const rect = el.getBoundingClientRect();
+                  return rect.width > 0 && rect.height > 0;
+                };
+                const selectors = [
+                  "[data-surface='/am/lib:export_button']",
+                  "[role='button'][data-surface*='export_button']",
+                  "[data-surface*='export']"
+                ];
+                const out = [];
+                const seen = new Set();
+                for (const sel of selectors) {
+                  for (const el of document.querySelectorAll(sel)) {
+                    const key = lower(el.getAttribute('data-surface') || '') + '|' + lower(el.innerText || '');
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const rect = el.getBoundingClientRect();
+                    out.push({
+                      selector: sel,
+                      role: String(el.getAttribute('role') || ''),
+                      text: normalize(el.innerText || '').slice(0, 80),
+                      aria_label: String(el.getAttribute('aria-label') || ''),
+                      title: String(el.getAttribute('title') || ''),
+                      data_surface: String(el.getAttribute('data-surface') || ''),
+                      in_dialog: !!el.closest('[role="dialog"]'),
+                      in_notifications: !!el.closest('#fbNotificationsFlyout'),
+                      visible: isVisible(el),
+                      x: Math.round(rect.x),
+                      y: Math.round(rect.y),
+                      w: Math.round(rect.width),
+                      h: Math.round(rect.height),
+                    });
+                  }
+                }
+                return JSON.stringify(out.slice(0, 10));
+                """
+            )
+            if payload:
+                return str(payload)
+        return ""
+
+    def _wait_view_export_entry_ready(self, sb, *, report_id: str = "", stage_tag: str = "[EXPORT:URL]") -> None:
+        timeout_sec = max(1.0, float(self.meta_config.get("view_report_ready_timeout_sec", 12.0)))
+        deadline = time.time() + timeout_sec
+        expected_report_id = str(report_id or "").strip()
+        while time.time() <= deadline:
+            current_url = self._safe_current_url(sb)
+            has_report_context = "/adsmanager/reporting/view" in str(current_url or "")
+            if has_report_context and expected_report_id:
+                has_report_context = f"selected_report_id={expected_report_id}" in current_url
+            if has_report_context:
+                with suppress(Exception):
+                    ready = bool(
+                        sb.execute_script(
+                            """
+                            const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                            const isVisible = (el) => {
+                              if (!el) return false;
+                              const style = window.getComputedStyle(el);
+                              if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') {
+                                return false;
+                              }
+                              const rect = el.getBoundingClientRect();
+                              return rect.width > 0 && rect.height > 0;
+                            };
+                            const selectors = [
+                              "[data-surface='/am/lib:export_button']",
+                              "[role='button'][data-surface*='export_button']"
+                            ];
+                            for (const sel of selectors) {
+                              for (const node of document.querySelectorAll(sel)) {
+                                if (!isVisible(node)) continue;
+                                if (node.closest('#fbNotificationsFlyout')) continue;
+                                if (node.closest('[role="dialog"]')) continue;
+                                if (normalize(node.getAttribute('aria-disabled') || '') === 'true') continue;
+                                return true;
+                              }
+                            }
+                            return false;
+                            """
+                        )
+                    )
+                    if ready:
+                        return
+            sb.sleep(0.25)
+        self.logger.warning("%s report_view_ready_wait_timeout report_id=%s", stage_tag, expected_report_id)
 
     def _dismiss_notification_overlay(self, sb, retries: int = 2) -> bool:
         dismissed = False
@@ -1373,9 +1702,10 @@ class MetaAutomation:
         return dismissed
 
     def _set_export_name_in_modal(self, sb, export_name: str) -> None:
-        target = str(export_name or "").strip()
+        target = self._normalize_export_name_value(export_name)
         if not target:
             return
+        settle_sec = max(0.2, float(self.meta_config.get("export_name_settle_sec", 2.0)))
 
         modal_el = self._find_export_modal_element(sb)
         with suppress(Exception):
@@ -1400,18 +1730,25 @@ class MetaAutomation:
                       const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
                       return aria.includes('export') || name.includes('export') || placeholder.includes('export');
                     }) || inputs[0];
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
                     preferred.focus();
-                    preferred.value = '';
+                    preferred.select?.();
+                    if (setter) setter.call(preferred, '');
+                    else preferred.value = '';
                     preferred.dispatchEvent(new Event('input', { bubbles: true }));
-                    preferred.value = target;
+                    if (setter) setter.call(preferred, target);
+                    else preferred.value = target;
                     preferred.dispatchEvent(new Event('input', { bubbles: true }));
                     preferred.dispatchEvent(new Event('change', { bubbles: true }));
-                    return (preferred.value || '').trim() === target;
+                    preferred.dispatchEvent(new Event('blur', { bubbles: true }));
+                    preferred.blur?.();
+                    return String(preferred.value || '').replace(/\\u200b/g, ' ').replace(/\\s+/g, ' ').trim() === target;
                     """,
                     modal_el,
                     target,
                 )
                 if bool(ok):
+                    sb.sleep(settle_sec)
                     return
 
         input_xpaths = [
@@ -1423,6 +1760,18 @@ class MetaAutomation:
             try:
                 sb.clear(xp, timeout=1.5)
                 sb.type(xp, target, timeout=1.5)
+                with suppress(Exception):
+                    sb.execute_script(
+                        """
+                        const el = arguments[0];
+                        if (!el) return;
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        el.dispatchEvent(new Event('blur', { bubbles: true }));
+                        if (typeof el.blur === 'function') el.blur();
+                        """,
+                        sb.driver.find_element(By.XPATH, xp),
+                    )
+                sb.sleep(settle_sec)
                 return
             except Exception:
                 continue
@@ -1638,6 +1987,14 @@ class MetaAutomation:
         )
 
     def _confirm_export_in_modal(self, sb) -> None:
+        css_confirm_selectors = [
+            "div[role='dialog']:not(#fbNotificationsFlyout) [data-surface*='export-confirm-button']",
+            "[data-surface*='ads_report_builder_export_dialog_modal'][data-surface*='export-confirm-button']",
+            "[data-surface*='export-confirm-button']",
+        ]
+        if self._click_first_css(sb, css_confirm_selectors, timeout=1.4):
+            return
+
         modal_el = self._find_export_modal_element(sb)
         with suppress(Exception):
             if modal_el:
@@ -1662,10 +2019,12 @@ class MetaAutomation:
                       );
                       const disabled = (
                         control.hasAttribute('disabled') ||
-                        String(control.getAttribute('aria-disabled') || '').toLowerCase() === 'true'
+                        String(control.getAttribute('aria-disabled') || '').toLowerCase() === 'true' ||
+                        String(control.getAttribute('aria-busy') || '').toLowerCase() === 'true'
                       );
                       if (disabled) continue;
-                      if (label === 'export' || label === '내보내기') {
+                      const surface = normalize(control.getAttribute('data-surface') || '');
+                      if (surface.includes('export-confirm-button') || label === 'export' || label === '내보내기') {
                         control.click();
                         return true;
                       }
@@ -1678,6 +2037,7 @@ class MetaAutomation:
                     return
 
         dialog_export_xpaths = [
+            "(//*[contains(@role,'dialog') and not(@id='fbNotificationsFlyout')]//*[@data-surface and contains(@data-surface,'export-confirm-button')])[1]",
             "(//*[contains(@role,'dialog')]//button[.//span[normalize-space()='Export']])[1]",
             "(//*[contains(@role,'dialog')]//button[normalize-space()='Export'])[1]",
             "(//*[contains(@role,'dialog')]//*[contains(@role,'button')][normalize-space()='Export'])[1]",
@@ -2106,6 +2466,8 @@ class MetaAutomation:
                 "toast_wait_elapsed_ms": int(max(0, int(toast_wait_elapsed_ms or 0))),
                 "file_signal_detected_at": str(file_signal_detected_at or ""),
                 "fallback_trigger_reason": str(fallback_trigger_reason or ""),
+                "accepted_export_name": str(getattr(ticket, "accepted_export_name", "") or ""),
+                "search_queries": list(getattr(ticket, "search_queries", None) or []),
             },
         }
 
@@ -2125,8 +2487,12 @@ class MetaAutomation:
             return payload_path
         return None
 
+    def _normalize_export_name_value(self, value: str) -> str:
+        normalized = str(value or "").replace("\u200b", " ")
+        return re.sub(r"\s+", " ", normalized).strip()
+
     def _is_export_name_set(self, sb, expected_name: str) -> bool:
-        expected = str(expected_name or "").strip()
+        expected = self._normalize_export_name_value(expected_name)
         if not expected:
             return False
 
@@ -2153,7 +2519,7 @@ class MetaAutomation:
                       const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
                       return aria.includes('export') || name.includes('export') || placeholder.includes('export');
                     }) || inputs[0];
-                    const val = (preferred.value || '').trim();
+                    const val = String(preferred.value || '').replace(/\\u200b/g, ' ').replace(/\\s+/g, ' ').trim();
                     return val === expected;
                     """,
                     modal_el,
@@ -2170,10 +2536,31 @@ class MetaAutomation:
         for xp in input_xpaths:
             with suppress(Exception):
                 el = sb.driver.find_element(By.XPATH, xp)
-                val = str(el.get_attribute("value") or "").strip()
+                val = self._normalize_export_name_value(str(el.get_attribute("value") or ""))
                 if val == expected:
                     return True
 
+        return False
+
+    def _verify_export_name_stable(self, sb, expected_name: str) -> bool:
+        expected = self._normalize_export_name_value(expected_name)
+        if not expected:
+            return False
+
+        required = max(1, int(self.meta_config.get("export_name_verify_consecutive", 2)))
+        settle_sec = max(0.2, float(self.meta_config.get("export_name_settle_sec", 2.0)))
+        poll_sec = min(0.35, max(0.12, settle_sec / max(2.0, float(required + 1))))
+        deadline = time.time() + max(settle_sec, poll_sec * float(required * 3))
+        consecutive = 0
+
+        while time.time() <= deadline:
+            if self._is_export_name_set(sb, expected):
+                consecutive += 1
+                if consecutive >= required:
+                    return True
+            else:
+                consecutive = 0
+            sb.sleep(poll_sec)
         return False
 
     def _wait_export_acceptance_signal(self, sb, timeout: Optional[int] = None) -> Optional[str]:
@@ -2255,6 +2642,7 @@ class MetaAutomation:
     ) -> ExportResult:
         self.logger.info("%s Trigger export: brand=%s report=%s export_name=%s", stage_tag, brand_cfg["brand_ko"], report_name, export_name)
         max_rounds = 3
+        required_name_verify = max(1, int(self.meta_config.get("export_name_verify_consecutive", 2)))
         for round_idx in range(1, max_rounds + 1):
             self._dismiss_notification_overlay(sb, retries=2)
             if not self._find_export_modal_element(sb):
@@ -2280,7 +2668,13 @@ class MetaAutomation:
                 raise RuntimeError(f"Could not locate export modal for export name set: {export_name}")
 
             self._set_export_name_in_modal(sb, export_name)
-            if self._is_export_name_set(sb, export_name):
+            if self._verify_export_name_stable(sb, export_name):
+                self.logger.info(
+                    "%s Export name verified report=%s required_consecutive=%s",
+                    stage_tag,
+                    report_name,
+                    required_name_verify,
+                )
                 break
 
             self.logger.warning(
@@ -2303,6 +2697,13 @@ class MetaAutomation:
 
         self._dismiss_notification_overlay(sb, retries=1)
         self._select_raw_xlsx_export_type(sb)
+        name_ok = self._verify_export_name_stable(sb, export_name)
+        xlsx_ok = self._is_raw_xlsx_selected(sb)
+        if not (name_ok and xlsx_ok):
+            raise RuntimeError(
+                "Export preflight gate failed before confirm: "
+                f"name_verified={name_ok} raw_xlsx_selected={xlsx_ok}"
+            )
 
         request_ts = time.time()
         confirm_error: Optional[Exception] = None
@@ -2329,13 +2730,27 @@ class MetaAutomation:
         if not signal:
             raise TimeoutError("No export acceptance signal detected after Export click")
 
-        self.logger.info("%s Export accepted: report=%s signal=%s", stage_tag, report_name, signal)
+        toast_probe = self._probe_view_export_toast(sb)
+        accepted_export_name = self._extract_export_name_from_toast_text(
+            str(toast_probe.get("view_toast_text") or "")
+        )
+        if accepted_export_name:
+            self.logger.info(
+                "%s Export accepted: report=%s signal=%s accepted_export_name=%s",
+                stage_tag,
+                report_name,
+                signal,
+                accepted_export_name,
+            )
+        else:
+            self.logger.info("%s Export accepted: report=%s signal=%s", stage_tag, report_name, signal)
         return ExportResult(
             success=True,
             method=method,
             export_name=export_name,
             request_ts=request_ts,
             report_name=report_name,
+            accepted_export_name=accepted_export_name,
         )
 
     def _export_stage_via_report_id_url(
@@ -2365,6 +2780,7 @@ class MetaAutomation:
                 expected_business_id=expected_business_id,
             ),
         )
+        self._wait_view_export_entry_ready(sb=sb, report_id=report_id, stage_tag=stage_tag)
         try:
             return self._trigger_export_from_current_context(
                 sb=sb,
@@ -2466,6 +2882,19 @@ class MetaAutomation:
             return DownloadResult(success=True, method="URL", file_path=final_path)
 
         fallback_trigger_reason = str(view_wait.fallback_trigger_reason or "no_file_signal_timeout")
+        toast_export_name = self._extract_export_name_from_toast_text(view_wait.view_toast_text)
+        accepted_export_name = str(export_result.accepted_export_name or "").strip() or toast_export_name
+        history_search_queries = self._build_history_search_queries(
+            export_name=export_result.export_name,
+            report_name=report_name,
+            accepted_export_name=accepted_export_name,
+        )
+        self.logger.info(
+            "%s history_search_candidates report=%s queries=%s",
+            stage_history,
+            report_name,
+            history_search_queries,
+        )
         self.logger.warning(
             "%s fallback gate opened report=%s reason=%s toast_state=%s toast_transition_seen=%s elapsed_ms=%s",
             stage_url,
@@ -2532,6 +2961,8 @@ class MetaAutomation:
                     toast_transition_seen=view_wait.toast_transition_seen,
                     toast_wait_elapsed_ms=view_wait.toast_wait_elapsed_ms,
                     file_signal_detected_at=view_wait.file_signal_detected_at,
+                    accepted_export_name=accepted_export_name,
+                    search_queries=history_search_queries,
                 )
                 final_path = self._download_export_from_history_with_bounded_polling(
                     sb=sb,
@@ -4128,8 +4559,17 @@ class MetaAutomation:
         export_name = str(getattr(ticket, "export_name", "") or "")
         request_ts = float(getattr(ticket, "request_ts", 0.0) or 0.0)
         target_path = str(getattr(ticket, "target_path", "") or "")
-        search_query = export_name
+        search_queries = [
+            str(query or "").strip()
+            for query in (getattr(ticket, "search_queries", None) or [])
+            if str(query or "").strip()
+        ]
+        if not search_queries:
+            search_queries = [export_name]
+        search_query_idx = 0
+        search_query = str(search_queries[search_query_idx] or "").strip() or export_name
         search_applied = False
+        search_applied_query = ""
         disappear_since_ts: Optional[float] = None
         processing_start_ts: Optional[float] = None
         verify_click_ts: Optional[float] = None
@@ -4177,7 +4617,7 @@ class MetaAutomation:
 
         def _refresh_rows() -> Optional[ExportHistoryRow]:
             nonlocal poll_count, last_rows, last_stats, top_candidate
-            rows = self._collect_export_rows(sb=sb, export_name=export_name)
+            rows = self._collect_export_rows(sb=sb, export_name=search_query or export_name)
             last_rows = rows
             last_stats_obj = getattr(self, "_last_export_row_match_stats", None)
             if isinstance(last_stats_obj, ExportRowMatchStats):
@@ -4199,17 +4639,18 @@ class MetaAutomation:
             current_poll_sec = min(poll_max_sec, current_poll_sec * max(1.1, poll_backoff_factor))
 
         def _maybe_set_search(force: bool = False) -> None:
-            nonlocal search_applied
-            if force or set_search_each_poll or (not search_applied):
+            nonlocal search_applied, search_applied_query
+            if force or set_search_each_poll or (not search_applied) or (search_applied_query != search_query):
                 self._set_exports_search_query(sb, search_query)
                 search_applied = True
+                search_applied_query = search_query
 
         def _should_heartbeat(now_ts: float) -> bool:
             return now_ts - last_heartbeat_log_ts >= heartbeat_sec
 
         def _open_exports_again(reason: str) -> bool:
             nonlocal reopen_count, row_disappear_reopen_count, initial_reopen_count
-            nonlocal last_reopen_ts, state, state_enter_ts, search_applied, disappear_since_ts
+            nonlocal last_reopen_ts, state, state_enter_ts, search_applied, search_applied_query, disappear_since_ts
             url = str(getattr(ticket, "exports_url", "") or self._safe_current_url(sb) or "").strip()
             if not url:
                 return False
@@ -4236,6 +4677,7 @@ class MetaAutomation:
             state = "WAIT_ROW_APPEAR"
             state_enter_ts = time.time()
             search_applied = False
+            search_applied_query = ""
             disappear_since_ts = None
             _maybe_set_search(force=True)
             return True
@@ -4408,6 +4850,22 @@ class MetaAutomation:
                             top_candidate=latest_row,
                         )
                         continue
+
+                    rotate_every_polls = max(1, int(self.meta_config.get("history_search_rotate_every_polls", 2)))
+                    if len(search_queries) > 1 and (poll_count % rotate_every_polls == 0):
+                        prev_query = search_query
+                        search_query_idx = (search_query_idx + 1) % len(search_queries)
+                        search_query = str(search_queries[search_query_idx] or "").strip() or prev_query
+                        if search_query != prev_query:
+                            self.logger.info(
+                                "%s search_query_rotated prev=%s next=%s idx=%s/%s",
+                                stage_history,
+                                prev_query,
+                                search_query,
+                                search_query_idx + 1,
+                                len(search_queries),
+                            )
+                            _maybe_set_search(force=True)
 
                     if now_ts - state_enter_ts >= row_appear_timeout_sec:
                         if initial_reopen_count < 1 and _open_exports_again("row_not_found_initial"):
@@ -4903,10 +5361,10 @@ class MetaAutomation:
                         stage_history,
                         click_no_effect_retry_used,
                         click_no_effect_retry_count,
-                        export_name,
+                        search_query or export_name,
                         int(last_stats.actionable_rows_count),
                     )
-                    candidate_rows = self._collect_export_rows(sb=sb, export_name=export_name)
+                    candidate_rows = self._collect_export_rows(sb=sb, export_name=search_query or export_name)
                     candidate_rows = sorted(
                         candidate_rows,
                         key=lambda r: (
@@ -5109,6 +5567,8 @@ class MetaAutomation:
             "toast_wait_elapsed_ms": int(getattr(ticket, "toast_wait_elapsed_ms", 0) or 0),
             "file_signal_detected_at": file_signal_detected_at,
             "fallback_trigger_reason": fallback_trigger_reason,
+            "accepted_export_name": str(getattr(ticket, "accepted_export_name", "") or ""),
+            "search_queries": list(search_queries),
         }
         if legacy_reason:
             failure_snapshot["legacy_reason"] = legacy_reason
@@ -5155,6 +5615,8 @@ class MetaAutomation:
             "toast_wait_elapsed_ms": int(getattr(ticket, "toast_wait_elapsed_ms", 0) or 0),
             "file_signal_detected_at": file_signal_detected_at,
             "fallback_trigger_reason": fallback_trigger_reason,
+            "accepted_export_name": str(getattr(ticket, "accepted_export_name", "") or ""),
+            "search_queries": list(search_queries),
             "dom_probe_path": str(dom_probe_path or ""),
             "screenshot_path": str(evidence.get("screenshot_path") or ""),
             "modal_text": permission_modal_text or str(evidence.get("modal_text") or ""),
