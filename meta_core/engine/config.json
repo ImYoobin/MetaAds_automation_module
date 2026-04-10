@@ -228,6 +228,7 @@
         "Frequency",
         "Video Plays at 50%",
         "Video Plays at 100%",
+        "ThruPlays",
         "Views",
         "QualifiedVisit",
         "Purchases"
@@ -251,6 +252,7 @@
         "Frequency",
         "Video Plays at 50%",
         "Video Plays at 100%",
+        "ThruPlays",
         "Views",
         "QualifiedVisit",
         "Purchases"
@@ -266,6 +268,7 @@
       "Link Clicks": "Link clicks",
       "Video Plays at 50%": "Video plays at 50%",
       "Video Plays at 100%": "Video plays at 100%",
+      "ThruPlays": "ThruPlays",
       "Views": "Views"
     },
     "source_sheet_map": {
