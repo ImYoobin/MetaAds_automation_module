@@ -2072,9 +2072,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _resolve_script_dir() -> Path:
+    # In PyInstaller onefile mode, __file__ points to a temp extraction path.
+    # Use executable directory so config sharing via ../config/meta keeps working.
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
 def main() -> int:
     args = parse_args()
-    script_dir = Path(__file__).resolve().parent
+    script_dir = _resolve_script_dir()
     run_date_token = dt.datetime.now().strftime("%Y%m%d")
 
     user_cfg: dict[str, Any] = {}
