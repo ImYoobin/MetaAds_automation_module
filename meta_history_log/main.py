@@ -1198,6 +1198,16 @@ def verify_filter_chip(page: Any, *, activity_prefix: str) -> str:
     return chip_text
 
 
+def _chip_text_matches_expected(*, activity_prefix: str, chip_text: str) -> bool:
+    expected = re.compile(
+        rf"(Campaign name|{re.escape(KR_CAMPAIGN_NAME)}).*"
+        rf"(contains all of|{re.escape(KR_CONTAINS_ALL)}).*"
+        rf"{re.escape(activity_prefix + '_')}",
+        re.IGNORECASE,
+    )
+    return bool(expected.search(_normalize_ui_text(chip_text)))
+
+
 def apply_filter_from_scratch(
     page: Any,
     *,
@@ -1582,6 +1592,21 @@ def ensure_campaign_name_filter(
                 chip_text = _normalize_ui_text(current_chip or "")
             except Exception:  # noqa: BLE001
                 chip_text = ""
+
+            if chip_text and _chip_text_matches_expected(
+                activity_prefix=activity_prefix,
+                chip_text=chip_text,
+            ):
+                logger.warning(
+                    "filter_apply_recovered_by_chip activity=%s attempt=%s/%s state=%s route=%s chip_text=%s",
+                    activity_prefix,
+                    attempt,
+                    attempts,
+                    state,
+                    route,
+                    chip_text,
+                )
+                return
 
             after_touch = _checkbox_touch_metrics(page)
             _log_checkbox_touch_if_changed(
