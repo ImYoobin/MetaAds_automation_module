@@ -1,0 +1,32 @@
+# Optional script config (no target override in v1).
+# Target accounts are always derived from:
+#   - activity_catalog.json report URLs (act, business_id)
+#
+# If this file is renamed to `config.yaml` and placed next to main.py,
+# `python main.py` will auto-load it.
+
+paths:
+  activity_catalog_path: ../config/meta/activity_catalog.json
+  runtime_settings_path: ../config/meta/runtime_settings.json
+
+runner:
+  # Optional overrides for runtime behavior only.
+  # Base defaults still come from runtime_settings.json.
+  headless: false
+  user_data_dir: "%USERPROFILE%\\MetaAdsExport\\user_data\\meta_history_log"
+
+  login_timeout_sec: 300
+  action_timeout_ms: 15000
+  table_load_timeout_sec: 30
+
+  lazy_scroll_pause_sec: 1.2
+  lazy_scroll_max_rounds: 120
+  lazy_scroll_no_new_rounds: 3
+
+  step_retry_count: 2
+
+  # If omitted, these default to:
+  #   {runtime.output_dir}\\history_logs\\logs
+  #   {runtime.output_dir}\\history_logs\\screenshots
+  log_dir: ""
+  screenshot_dir: ""

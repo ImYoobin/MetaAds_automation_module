@@ -78,3 +78,33 @@ Expected launcher flow:
 ## 6) Deprecated build-kit path
 - `module_source\_build_kit\meta\*.ps1` remains as compatibility wrappers.
 - Preferred path: `module_source\meta_automation_module\build\meta\*.ps1`.
+
+## 7) Meta History Log (separate runner)
+`meta_history_log` is independent from report export runtime.
+Shared items are only:
+- `config/meta/activity_catalog.json`
+- `config/meta/runtime_settings.json`
+
+Install requirements (separate venv recommended):
+```powershell
+python -m venv .venv-history
+.\.venv-history\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r .\meta_history_log\requirements.txt
+```
+
+Run with Python:
+```powershell
+python .\meta_history_log\main.py --verbose
+```
+
+Config reference paths used by default in module run:
+- `module_source/meta_automation_module/config/meta/activity_catalog.json`
+- `module_source/meta_automation_module/config/meta/runtime_settings.json`
+
+Conflict guardrail with report export:
+- No shared `selected_adset_ids` / URL column hacks.
+- Dedicated browser profile default:
+  - `%USERPROFILE%\MetaAdsExport\user_data\meta_history_log`
+- Output folder:
+  - `{runtime_settings.output_dir}\history_logs\{yyyymmdd}`
