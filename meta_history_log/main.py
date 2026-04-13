@@ -236,8 +236,25 @@ def _resolve_paths(
     script_dir: Path,
     user_config: dict[str, Any],
 ) -> tuple[Path, Path]:
-    default_catalog = (script_dir.parent / "config" / "meta" / "activity_catalog.json").resolve()
-    default_runtime = (script_dir.parent / "config" / "meta" / "runtime_settings.json").resolve()
+    candidate_roots: list[Path]
+    if script_dir.name.lower() == "meta_history_log":
+        candidate_roots = [script_dir.parent, script_dir]
+    else:
+        candidate_roots = [script_dir, script_dir.parent]
+
+    default_catalog: Path | None = None
+    default_runtime: Path | None = None
+    for root in candidate_roots:
+        catalog_candidate = root / "config" / "meta" / "activity_catalog.json"
+        runtime_candidate = root / "config" / "meta" / "runtime_settings.json"
+        if catalog_candidate.exists() and runtime_candidate.exists():
+            default_catalog = catalog_candidate.resolve()
+            default_runtime = runtime_candidate.resolve()
+            break
+    if default_catalog is None or default_runtime is None:
+        fallback_root = candidate_roots[0]
+        default_catalog = (fallback_root / "config" / "meta" / "activity_catalog.json").resolve()
+        default_runtime = (fallback_root / "config" / "meta" / "runtime_settings.json").resolve()
 
     raw_paths = user_config.get("paths")
     if not isinstance(raw_paths, dict):
@@ -531,10 +548,14 @@ def _wait_for_login_context(page: Any, *, timeout_sec: int) -> None:
     )
 
 
+def _activity_filter_token(activity_prefix: str) -> str:
+    return f"{activity_prefix}_"
+
+
 def _build_campaign_filter_set(*, activity_prefix: str) -> str:
     # Meta filter_set grammar (control-separator included):
     # SEARCH_BY_CAMPAIGN_GROUP_NAME-STRING<0x1E>CONTAINS_ALL<0x1E>"[\"RCRA_\"]"
-    token = f"{activity_prefix}_"
+    token = _activity_filter_token(activity_prefix)
     value_list = f'[\\\"{token}\\\"]'
     return (
         "SEARCH_BY_CAMPAIGN_GROUP_NAME-STRING"
@@ -1183,26 +1204,28 @@ def verify_filter_chip(page: Any, *, activity_prefix: str) -> str:
     ).first
     chip_btn.wait_for(state="visible", timeout=10_000)
     chip_text = _normalize_ui_text(chip_btn.text_content() or "")
+    activity_token = _activity_filter_token(activity_prefix)
 
     expected = re.compile(
         rf"(Campaign name|{re.escape(KR_CAMPAIGN_NAME)}).*"
         rf"(contains all of|{re.escape(KR_CONTAINS_ALL)}).*"
-        rf"{re.escape(activity_prefix + '_')}",
+        rf"{re.escape(activity_token)}",
         re.IGNORECASE,
     )
     if not expected.search(chip_text):
         raise AutomationError(
             "Filter chip mismatch. "
-            f"expected_campaign+operator+value={activity_prefix}_ actual={chip_text}"
+            f"expected_campaign+operator+value={activity_token} actual={chip_text}"
         )
     return chip_text
 
 
 def _chip_text_matches_expected(*, activity_prefix: str, chip_text: str) -> bool:
+    activity_token = _activity_filter_token(activity_prefix)
     expected = re.compile(
         rf"(Campaign name|{re.escape(KR_CAMPAIGN_NAME)}).*"
         rf"(contains all of|{re.escape(KR_CONTAINS_ALL)}).*"
-        rf"{re.escape(activity_prefix + '_')}",
+        rf"{re.escape(activity_token)}",
         re.IGNORECASE,
     )
     return bool(expected.search(_normalize_ui_text(chip_text)))
@@ -1225,13 +1248,13 @@ def apply_filter_from_scratch(
         search_input = _focus_search_input(page, search_input)
 
         typeahead = page.locator("[data-testid='typeahead-filter-option']")
-        activity_token = f"{activity_prefix}_"
+        activity_token = _activity_filter_token(activity_prefix)
 
         # Primary route: type activity token and click
         # "Campaign name contains all of {activity_token}" suggestion.
         stage = "type_activity_token"
         dropdown_ready = False
-        for query in (activity_token, activity_prefix.lower() + "_", activity_prefix.lower()):
+        for query in (activity_token, _activity_filter_token(activity_prefix.lower()), activity_prefix.lower()):
             try:
                 search_input.fill("")
                 search_input.fill(query)
@@ -1685,17 +1708,11 @@ def _select_all_adsets(page: Any) -> None:
             checkbox.check(timeout=5000, force=True)
         except Exception:
             checkbox.click(timeout=5000, force=True)
-
-    page.wait_for_selector(
-        "xpath=//div[@role='button' and @aria-label and "
-        "(@aria-disabled='false' or not(@aria-disabled)) and "
-        "(contains(translate(@aria-label,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'history') "
-        f"or contains(@aria-label,'{KR_HISTORY}'))]",
-        timeout=15_000,
-    )
+    page.wait_for_timeout(400)
 
 
 def _open_history_panel(page: Any) -> None:
+    table = page.locator(TABLE_SELECTOR).first
     history_button = page.locator(
         "xpath=(//div[@role='button' and @aria-label and "
         "(@aria-disabled='false' or not(@aria-disabled)) and "
@@ -1711,10 +1728,20 @@ def _open_history_panel(page: Any) -> None:
         clicked = False
 
     if not clicked:
+        try:
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001
+            pass
         page.keyboard.press("Control+i")
+        page.wait_for_timeout(450)
+        try:
+            if not table.is_visible():
+                page.keyboard.press("Control+i")
+        except Exception:  # noqa: BLE001
+            page.keyboard.press("Control+i")
 
     page.wait_for_timeout(1200)
-    page.locator(TABLE_SELECTOR).first.wait_for(state="visible", timeout=20_000)
+    table.wait_for(state="visible", timeout=20_000)
 
 
 def _ensure_last_7_days(page: Any) -> None:
