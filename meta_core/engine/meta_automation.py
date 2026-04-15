@@ -606,6 +606,7 @@ class MetaAutomation:
 
     def _configure_export_modal(self, sb) -> None:
         self._select_raw_xlsx_export_type(sb)
+        self._ensure_include_summary_row_unchecked(sb)
 
         # Keep "Include summary row" default state unless explicit config is needed.
         dialog_export_xpaths = [
@@ -752,6 +753,188 @@ class MetaAutomation:
                 return
 
         raise RuntimeError("Could not enforce export type: Raw data table (.xlsx)")
+
+    def _read_include_summary_row_state(self, sb) -> Optional[bool]:
+        modal_el = self._find_export_modal_element(sb)
+        with suppress(Exception):
+            if modal_el:
+                state = sb.execute_script(
+                    """
+                    const dlg = arguments[0];
+                    const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      const rect = el.getBoundingClientRect();
+                      return rect.width > 0 && rect.height > 0;
+                    };
+                    const tokens = ['include summary row', 'summary row', '요약 행', '합계 행'];
+                    const controls = [
+                      ...dlg.querySelectorAll('input[type="checkbox"], [role="checkbox"]')
+                    ].filter(isVisible);
+                    const getChecked = (control) => {
+                      if (!control) return null;
+                      const tag = String(control.tagName || '').toLowerCase();
+                      if (tag === 'input' && String(control.type || '').toLowerCase() === 'checkbox') {
+                        return !!control.checked;
+                      }
+                      const aria = String(control.getAttribute('aria-checked') || '').toLowerCase();
+                      if (aria === 'true') return true;
+                      if (aria === 'false') return false;
+                      const nested = control.querySelector?.('input[type="checkbox"]');
+                      if (nested) return !!nested.checked;
+                      return null;
+                    };
+
+                    let fallback = null;
+                    if (controls.length === 1) {
+                      fallback = getChecked(controls[0]);
+                    }
+
+                    for (const control of controls) {
+                      const owner =
+                        control.closest?.('label, li, div, [role="checkbox"]') ||
+                        control.parentElement ||
+                        control;
+                      const text = norm(
+                        owner?.innerText ||
+                        control.innerText ||
+                        control.getAttribute('aria-label') ||
+                        control.getAttribute('title') ||
+                        ''
+                      );
+                      if (!tokens.some((token) => text.includes(token))) continue;
+                      const checked = getChecked(control);
+                      if (checked === true || checked === false) return checked;
+                    }
+                    return fallback;
+                    """,
+                    modal_el,
+                )
+                if isinstance(state, bool):
+                    return state
+        return None
+
+    def _toggle_include_summary_row(self, sb) -> bool:
+        modal_el = self._find_export_modal_element(sb)
+        with suppress(Exception):
+            if modal_el:
+                clicked = sb.execute_script(
+                    """
+                    const dlg = arguments[0];
+                    const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      const rect = el.getBoundingClientRect();
+                      return rect.width > 0 && rect.height > 0;
+                    };
+                    const tokens = ['include summary row', 'summary row', '요약 행', '합계 행'];
+                    const controls = [
+                      ...dlg.querySelectorAll('input[type="checkbox"], [role="checkbox"]')
+                    ].filter(isVisible);
+                    const clickControl = (node) => {
+                      if (!node) return false;
+                      const disabled = (
+                        node.hasAttribute?.('disabled') ||
+                        String(node.getAttribute?.('aria-disabled') || '').toLowerCase() === 'true'
+                      );
+                      if (disabled) return false;
+                      if (typeof node.click === 'function') {
+                        node.click();
+                        return true;
+                      }
+                      return false;
+                    };
+
+                    if (controls.length === 1) {
+                      const only = controls[0];
+                      if (clickControl(only)) return true;
+                      const owner = only.closest?.('label, li, div') || only.parentElement;
+                      if (clickControl(owner)) return true;
+                    }
+
+                    for (const control of controls) {
+                      const owner =
+                        control.closest?.('label, li, div, [role="checkbox"]') ||
+                        control.parentElement ||
+                        control;
+                      const text = norm(
+                        owner?.innerText ||
+                        control.innerText ||
+                        control.getAttribute('aria-label') ||
+                        control.getAttribute('title') ||
+                        ''
+                      );
+                      if (!tokens.some((token) => text.includes(token))) continue;
+                      if (clickControl(control)) return true;
+                      if (clickControl(owner)) return true;
+                    }
+                    return false;
+                    """,
+                    modal_el,
+                )
+                if bool(clicked):
+                    return True
+
+        option_xpaths = [
+            (
+                "(//*[contains(@role,'dialog')]//*[contains(translate(normalize-space(.),"
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'include summary row')]"
+                "/ancestor::*[self::label or self::li or self::div][1])[1]"
+            ),
+            (
+                "(//*[contains(@role,'dialog')]//*[contains(normalize-space(.),'요약') and "
+                "contains(normalize-space(.),'행')]/ancestor::*[self::label or self::li or self::div][1])[1]"
+            ),
+            "(//*[contains(@role,'dialog')]//input[@type='checkbox'])[1]",
+        ]
+        if self._click_first_xpath(sb, option_xpaths, timeout=1.5):
+            return True
+
+        return (
+            self._safe_click_any_text(sb, "Include summary row", timeout=1.2)
+            or self._safe_click_any_text(sb, "summary row", timeout=1.2)
+            or self._safe_click_any_text(sb, "요약 행", timeout=1.2)
+        )
+
+    def _ensure_include_summary_row_unchecked(self, sb) -> bool:
+        state = self._read_include_summary_row_state(sb)
+        if state is None:
+            self.logger.info("Export option state unknown: Include summary row control not detected.")
+            return True
+        if state is False:
+            self.logger.info("Export option verified: Include summary row already unchecked.")
+            return True
+
+        for attempt in range(1, 4):
+            clicked = self._toggle_include_summary_row(sb)
+            if not clicked:
+                self.logger.warning(
+                    "Could not click Include summary row control. attempt=%s/3",
+                    attempt,
+                )
+            sb.sleep(0.25)
+            state = self._read_include_summary_row_state(sb)
+            if state is False:
+                self.logger.info(
+                    "Export option adjusted: Include summary row unchecked (attempt=%s).",
+                    attempt,
+                )
+                return True
+
+        final_state = self._read_include_summary_row_state(sb)
+        if final_state is True:
+            self.logger.warning(
+                "Include summary row remained checked; continuing with transformer fallback cleanup."
+            )
+            return False
+        self.logger.warning(
+            "Could not verify Include summary row state after toggle attempts; continuing with fallback cleanup."
+        )
+        return False
 
     def _is_loading_indicator_present(self, sb) -> bool:
         with suppress(Exception):
@@ -2697,6 +2880,7 @@ class MetaAutomation:
 
         self._dismiss_notification_overlay(sb, retries=1)
         self._select_raw_xlsx_export_type(sb)
+        self._ensure_include_summary_row_unchecked(sb)
         name_ok = self._verify_export_name_stable(sb, export_name)
         xlsx_ok = self._is_raw_xlsx_selected(sb)
         if not (name_ok and xlsx_ok):
@@ -6301,6 +6485,7 @@ class MetaAutomation:
 
         # Force selection to Raw data table (.xlsx) to avoid accidental PNG export.
         self._select_raw_xlsx_export_type(sb)
+        self._ensure_include_summary_row_unchecked(sb)
         if not (self._safe_click_any_text(sb, "Export", timeout=2) or self._safe_click_any_text(sb, "\ub0b4\ubcf4\ub0b4\uae30", timeout=2)):
             raise RuntimeError("Could not confirm Export after selecting Raw data table (.xlsx)")
 
