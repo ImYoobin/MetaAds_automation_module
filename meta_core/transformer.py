@@ -35,19 +35,7 @@ META_SOURCE_WORKSHEET_BY_KEY: dict[str, str] = {
 }
 
 TARGET_TO_SOURCE_COLUMN_MAP: dict[str, str] = {
-    "Campaign Name": "Campaign name",
-    "Ad Set ID": "Ad set ID",
-    "Ad Set Name": "Ad set name",
-    "Ad Name": "Ad name",
-    "Amount Spent (KRW)": "Amount spent (KRW)",
     "CPQV (KRW)": "Cost per QualifiedVisit",
-    "Clicks (All)": "Clicks (all)",
-    "Link Clicks": "Link clicks",
-    "Video Plays at 50%": "Video plays at 50%",
-    "Video Plays at 100%": "Video plays at 100%",
-    "ThruPlays": "ThruPlays",
-    "Views": "Views",
-    "3-Second Video Plays": "3-second video plays",
 }
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,53 +53,85 @@ _META_TEMPLATE_SHEETS: tuple[TemplateSheetConfig, ...] = (
     TemplateSheetConfig(
         "Overall",
         [
+            "Placement",
             "Day",
             "Campaign ID",
-            "Campaign Name",
-            "Ad Set ID",
-            "Ad Set Name",
+            "Ad set ID",
             "Ad ID",
-            "Ad Name",
-            "Currency Code",
-            "Amount Spent (KRW)",
-            "CPQV (KRW)",
-            "Clicks (All)",
-            "Link Clicks",
-            "Impressions",
+            "Device platform",
+            "Campaign name",
+            "Ad set name",
+            "Ad name",
             "Reach",
+            "Impressions",
             "Frequency",
-            "Video Plays at 50%",
-            "Video Plays at 100%",
-            "ThruPlays",
-            "3-Second Video Plays",
+            "Attribution setting",
+            "Amount spent (KRW)",
+            "Link clicks",
+            "CPQV (KRW)",
+            "Clicks (all)",
+            "Video plays at 50%",
+            "Video plays at 100%",
+            "call_to_action_type",
+            "Objective",
+            "Views",
+            "Campaign Budget",
+            "Campaign Budget Type",
             "QualifiedVisit",
             "Purchases",
+            "3-second video plays",
+            "Buying type",
+            "Bid",
+            "Bid type",
+            "Performance goal",
+            "Included custom audiences",
+            "Ad Set Budget",
+            "Ad Set Budget Type",
+            "Reporting starts",
+            "Reporting ends",
+            "ThruPlays",
         ],
     ),
     TemplateSheetConfig(
         "Overall-BoF",
         [
+            "Placement",
             "Day",
             "Campaign ID",
-            "Campaign Name",
-            "Ad Set ID",
-            "Ad Set Name",
+            "Ad set ID",
             "Ad ID",
-            "Ad Name",
-            "Currency Code",
-            "Amount Spent (KRW)",
-            "CPQV (KRW)",
-            "Clicks (All)",
-            "Link Clicks",
-            "Impressions",
+            "Device platform",
+            "Campaign name",
+            "Ad set name",
+            "Ad name",
             "Reach",
+            "Impressions",
             "Frequency",
-            "Video Plays at 50%",
-            "Video Plays at 100%",
+            "Attribution setting",
+            "Amount spent (KRW)",
+            "Link clicks",
+            "CPQV (KRW)",
+            "Clicks (all)",
+            "Video plays at 50%",
+            "Video plays at 100%",
+            "call_to_action_type",
+            "Objective",
+            "Views",
+            "Campaign Budget",
+            "Campaign Budget Type",
+            "3-second video plays",
+            "Buying type",
+            "Bid",
+            "Bid type",
+            "Performance goal",
+            "Included custom audiences",
+            "Ad Set Budget",
+            "Ad Set Budget Type",
+            "Result type",
+            "Results",
+            "Reporting starts",
+            "Reporting ends",
             "ThruPlays",
-            "3-Second Video Plays",
-            "QualifiedVisit",
-            "Purchases",
         ],
     ),
     TemplateSheetConfig(
@@ -119,27 +139,41 @@ _META_TEMPLATE_SHEETS: tuple[TemplateSheetConfig, ...] = (
         [
             "Day",
             "Campaign ID",
-            "Campaign Name",
-            "Ad Set ID",
-            "Ad Set Name",
+            "Ad set ID",
             "Ad ID",
-            "Ad Name",
+            "Campaign name",
+            "Ad set name",
+            "Ad name",
             "Age",
             "Gender",
-            "Currency Code",
-            "Amount Spent (KRW)",
-            "CPQV (KRW)",
-            "Clicks (All)",
-            "Link Clicks",
-            "Impressions",
             "Reach",
+            "Impressions",
             "Frequency",
-            "Video Plays at 50%",
-            "Video Plays at 100%",
-            "ThruPlays",
-            "3-Second Video Plays",
+            "Attribution setting",
+            "Amount spent (KRW)",
+            "Link clicks",
+            "CPQV (KRW)",
+            "Clicks (all)",
+            "Video plays at 50%",
+            "Video plays at 100%",
+            "call_to_action_type",
+            "Objective",
+            "Views",
+            "Campaign Budget",
+            "Campaign Budget Type",
             "QualifiedVisit",
             "Purchases",
+            "3-second video plays",
+            "Buying type",
+            "Bid",
+            "Bid type",
+            "Performance goal",
+            "Included custom audiences",
+            "Ad Set Budget",
+            "Ad Set Budget Type",
+            "Reporting starts",
+            "Reporting ends",
+            "ThruPlays",
         ],
     ),
     TemplateSheetConfig(
@@ -147,27 +181,39 @@ _META_TEMPLATE_SHEETS: tuple[TemplateSheetConfig, ...] = (
         [
             "Day",
             "Campaign ID",
-            "Campaign Name",
-            "Ad Set ID",
-            "Ad Set Name",
+            "Ad set ID",
             "Ad ID",
-            "Ad Name",
+            "Campaign name",
+            "Ad set name",
+            "Ad name",
             "Age",
             "Gender",
-            "Currency Code",
-            "Amount Spent (KRW)",
-            "CPQV (KRW)",
-            "Clicks (All)",
-            "Link Clicks",
-            "Impressions",
             "Reach",
+            "Impressions",
             "Frequency",
-            "Video Plays at 50%",
-            "Video Plays at 100%",
-            "ThruPlays",
-            "3-Second Video Plays",
-            "QualifiedVisit",
+            "Amount spent (KRW)",
+            "Link clicks",
+            "Clicks (all)",
+            "Video plays at 50%",
+            "Video plays at 100%",
+            "call_to_action_type",
+            "Objective",
+            "Views",
+            "Campaign Budget",
+            "Campaign Budget Type",
             "Purchases",
+            "3-second video plays",
+            "Buying type",
+            "Bid",
+            "Bid type",
+            "Included custom audiences",
+            "Ad Set Budget",
+            "Ad Set Budget Type",
+            "Result type",
+            "Results",
+            "Reporting starts",
+            "Reporting ends",
+            "ThruPlays",
         ],
     ),
     TemplateSheetConfig(
@@ -175,26 +221,40 @@ _META_TEMPLATE_SHEETS: tuple[TemplateSheetConfig, ...] = (
         [
             "Day",
             "Campaign ID",
-            "Campaign Name",
-            "Ad Set ID",
-            "Ad Set Name",
+            "Ad set ID",
             "Ad ID",
-            "Ad Name",
-            "Hour",
-            "Currency Code",
-            "Amount Spent (KRW)",
-            "CPQV (KRW)",
-            "Clicks (All)",
-            "Link Clicks",
-            "Impressions",
+            "Campaign name",
+            "Ad set name",
+            "Ad name",
+            "Time of day (viewer's time zone)",
             "Reach",
+            "Impressions",
             "Frequency",
-            "Video Plays at 50%",
-            "Video Plays at 100%",
-            "ThruPlays",
-            "3-Second Video Plays",
+            "Attribution setting",
+            "Amount spent (KRW)",
+            "Link clicks",
+            "Clicks (all)",
+            "Video plays at 50%",
+            "Video plays at 100%",
+            "call_to_action_type",
+            "Objective",
+            "Views",
+            "Campaign Budget",
+            "Campaign Budget Type",
             "QualifiedVisit",
             "Purchases",
+            "3-second video plays",
+            "Buying type",
+            "Bid",
+            "Bid type",
+            "Performance goal",
+            "Included custom audiences",
+            "Ad Set Budget",
+            "Ad Set Budget Type",
+            "CPQV (KRW)",
+            "Reporting starts",
+            "Reporting ends",
+            "ThruPlays",
         ],
     ),
     TemplateSheetConfig(
@@ -202,26 +262,35 @@ _META_TEMPLATE_SHEETS: tuple[TemplateSheetConfig, ...] = (
         [
             "Day",
             "Campaign ID",
-            "Campaign Name",
-            "Ad Set ID",
-            "Ad Set Name",
+            "Ad set ID",
             "Ad ID",
-            "Ad Name",
-            "Hour",
-            "Currency Code",
-            "Amount Spent (KRW)",
-            "CPQV (KRW)",
-            "Clicks (All)",
-            "Link Clicks",
-            "Impressions",
+            "Campaign name",
+            "Ad set name",
+            "Ad name",
+            "Time of day (viewer's time zone)",
             "Reach",
+            "Impressions",
             "Frequency",
-            "Video Plays at 50%",
-            "Video Plays at 100%",
+            "Amount spent (KRW)",
+            "Link clicks",
+            "Clicks (all)",
+            "Video plays at 50%",
+            "Video plays at 100%",
+            "call_to_action_type",
+            "Objective",
+            "Views",
+            "Campaign Budget",
+            "Campaign Budget Type",
+            "3-second video plays",
+            "Buying type",
+            "Bid",
+            "Bid type",
+            "Included custom audiences",
+            "Ad Set Budget",
+            "Ad Set Budget Type",
+            "Reporting starts",
+            "Reporting ends",
             "ThruPlays",
-            "3-Second Video Plays",
-            "QualifiedVisit",
-            "Purchases",
         ],
     ),
 )
@@ -256,6 +325,32 @@ def _looks_like_xlsx(payload: bytes, content_type: str) -> bool:
 def _normalize_header_value(raw_value: Any, index: int) -> str:
     text = str(raw_value).strip() if raw_value is not None else ""
     return text if text else f"Column_{index}"
+
+
+def _dedupe_headers(headers: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicate_roots: list[str] = []
+    out: list[str] = []
+
+    for header in headers:
+        candidate = str(header or "").strip()
+        if candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+            continue
+
+        if candidate not in duplicate_roots:
+            duplicate_roots.append(candidate)
+        suffix = 2
+        while f"{candidate}__dup{suffix}" in seen:
+            suffix += 1
+        unique_name = f"{candidate}__dup{suffix}"
+        seen.add(unique_name)
+        out.append(unique_name)
+
+    if duplicate_roots:
+        _LOGGER.warning("duplicate_headers_detected names=%s", duplicate_roots)
+    return out
 
 
 def _normalize_id_text(text: str) -> str:
@@ -340,10 +435,10 @@ def _read_xlsx_payload(payload: bytes, sheet_key: str) -> pd.DataFrame:
         except StopIteration:
             return pd.DataFrame()
 
-        headers = [
+        headers = _dedupe_headers([
             _normalize_header_value(raw_value, index=idx)
             for idx, raw_value in enumerate(header_row, start=1)
-        ]
+        ])
 
         records: list[list[str]] = []
         for row_idx, row in enumerate(rows_iter, start=2):
@@ -437,6 +532,12 @@ class MetaExportTransformer:
                 source_df=source_df,
                 target_columns=target_columns,
                 target_to_source_col=TARGET_TO_SOURCE_COLUMN_MAP,
+                sheet_name=target_sheet_name,
+            )
+            target_df, _ = _drop_summary_rows(
+                sheet_name=target_sheet_name,
+                df=target_df,
+                stage="before_sheet_write",
             )
             _write_df_to_sheet(workbook[target_sheet_name], target_df)
             missing_by_sheet[target_sheet_name] = missing
@@ -470,6 +571,7 @@ def _build_target_sheet_df(
     source_df: pd.DataFrame,
     target_columns: list[str],
     target_to_source_col: Mapping[str, str],
+    sheet_name: str = "",
 ) -> tuple[pd.DataFrame, list[str]]:
     out = pd.DataFrame(index=source_df.index.copy())
     missing: list[str] = []
@@ -487,7 +589,7 @@ def _build_target_sheet_df(
             out[target_col] = ""
             missing.append(target_col)
 
-    for id_col in ("Campaign ID", "Ad Set ID", "Ad ID"):
+    for id_col in ("Campaign ID", "Ad set ID", "Ad Set ID", "Ad ID"):
         if id_col in out.columns:
             out[id_col] = out[id_col].map(
                 lambda value: _normalize_id_text(str(value).strip()) if not pd.isna(value) else ""
@@ -495,7 +597,97 @@ def _build_target_sheet_df(
 
     if "Day" in out.columns:
         out["Day"] = _normalize_day(out["Day"])
+    out, _ = _drop_summary_rows(
+        sheet_name=sheet_name or "(unknown)",
+        df=out,
+        stage="after_mapping",
+    )
     return out, missing
+
+
+def _is_blank_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if pd.isna(value):
+        return True
+    return str(value).strip() == ""
+
+
+def _is_numeric_like_value(value: Any) -> bool:
+    if _is_blank_value(value):
+        return False
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float, Decimal)):
+        return True
+
+    text = str(value).strip()
+    if not text:
+        return False
+    text = text.replace(",", "").replace("%", "")
+    if text.startswith("(") and text.endswith(")"):
+        text = f"-{text[1:-1].strip()}"
+    if text.startswith("+"):
+        text = text[1:]
+    try:
+        decimal_value = Decimal(text)
+    except InvalidOperation:
+        return False
+    return not decimal_value.is_nan() and not decimal_value.is_infinite()
+
+
+def _drop_summary_rows(
+    *,
+    sheet_name: str,
+    df: pd.DataFrame,
+    stage: str,
+) -> tuple[pd.DataFrame, int]:
+    if df.empty:
+        return df, 0
+
+    key_candidates = [
+        "Day",
+        "Campaign ID",
+        "Ad set ID",
+        "Ad Set ID",
+        "Ad ID",
+        "Campaign name",
+        "Campaign Name",
+        "Ad set name",
+        "Ad Set Name",
+        "Ad name",
+        "Ad Name",
+    ]
+    key_cols = [col for col in key_candidates if col in df.columns]
+    if not key_cols:
+        return df, 0
+
+    metric_cols = [col for col in df.columns if col not in key_cols]
+    if not metric_cols:
+        return df, 0
+
+    drop_indexes: list[Any] = []
+    for row_index, row in df.iterrows():
+        if any(not _is_blank_value(row.get(col)) for col in key_cols):
+            continue
+        metric_values = [row.get(col) for col in metric_cols]
+        if not any(not _is_blank_value(value) for value in metric_values):
+            continue
+        if not any(_is_numeric_like_value(value) for value in metric_values):
+            continue
+        drop_indexes.append(row_index)
+
+    removed = len(drop_indexes)
+    if removed <= 0:
+        return df, 0
+
+    _LOGGER.info(
+        "summary_row_removed sheet=%s stage=%s removed=%s",
+        sheet_name,
+        stage,
+        removed,
+    )
+    return df.drop(index=drop_indexes).reset_index(drop=True), removed
 
 
 def _normalize_col_name(value: str) -> str:
