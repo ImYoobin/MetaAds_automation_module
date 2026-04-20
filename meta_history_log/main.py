@@ -28,6 +28,7 @@ import re
 import sys
 import time
 from collections import OrderedDict
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -654,20 +655,74 @@ def _is_meta_business_home_url(url: str) -> bool:
     }
 
 
+def _is_meta_login_page_url(url: str) -> bool:
+    normalized = _safe_text(url).lower()
+    return any(
+        token in normalized
+        for token in (
+            "business.facebook.com/business/loginpage",
+            "facebook.com/login",
+            "facebook.com/checkpoint",
+            "facebook.com/recover",
+            "facebook.com/two_step_verification",
+        )
+    )
+
+
+def _is_meta_account_chooser_url(url: str) -> bool:
+    normalized = _safe_text(url).lower()
+    return any(
+        token in normalized
+        for token in (
+            "facebook.com/login/identify",
+            "facebook.com/login/device-based",
+            "facebook.com/checkpoint",
+            "facebook.com/confirm",
+            "business.facebook.com/select",
+            "business.facebook.com/accountquality",
+        )
+    )
+
+
+def _classify_meta_login_context(url: str) -> str:
+    if _is_ads_manager_ready_url(url):
+        return "ads_manager_ready"
+    if _is_meta_login_page_url(url):
+        return "login_page"
+    if _is_meta_account_chooser_url(url):
+        return "account_chooser"
+    if _is_meta_business_home_url(url):
+        return "business_home"
+    return "other"
+
+
 def _wait_for_login_context(
     page: Any,
     *,
     timeout_sec: int,
     ready_url: str = "",
+    logger: Any | None = None,
+    status_callback: Any | None = None,
 ) -> None:
     deadline = time.time() + max(5, timeout_sec)
     normalized_ready_url = _safe_text(ready_url)
     last_ready_redirect_at = 0.0
+    last_state = ""
+    last_url = ""
     while time.time() < deadline:
         url = _safe_text(page.url)
-        if _is_ads_manager_ready_url(url):
+        state = _classify_meta_login_context(url)
+        if state != last_state or url != last_url:
+            last_state = state
+            last_url = url
+            if logger is not None:
+                with suppress(Exception):
+                    logger.info("login_context_state state=%s url=%s", state, url)
+            if callable(status_callback):
+                status_callback(state, url)
+        if state == "ads_manager_ready":
             return
-        if normalized_ready_url and _is_meta_business_home_url(url):
+        if normalized_ready_url and state == "business_home":
             now = time.time()
             if now - last_ready_redirect_at >= 3:
                 last_ready_redirect_at = now

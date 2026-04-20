@@ -11,7 +11,11 @@ from unittest.mock import patch
 from dashboard.models import HistoryAccountTarget, HistoryExecutionPlan
 from meta_core.pathing import PreparedMetaUserDataDir
 from meta_history_log import runtime as runtime_module
-from meta_history_log.main import RunnerOptions
+from meta_history_log.main import (
+    NO_ACTION_LOG_ROWS_MESSAGE,
+    NO_TARGET_ACCOUNTS_MESSAGE,
+    RunnerOptions,
+)
 
 
 class _DummyLogger:
@@ -265,15 +269,15 @@ class HistoryRuntimeTests(unittest.TestCase):
 
         self.assertEqual(
             final_updates["brand_a::ACT_NO_TARGET::history"]["message"],
-            "Report URL에서 실행 대상 계정을 찾지 못했습니다.",
+            NO_TARGET_ACCOUNTS_MESSAGE,
         )
         self.assertEqual(final_updates["brand_a::ACT_NO_TARGET::history"]["status"], "Skipped")
         self.assertEqual(final_updates["brand_a::ACT_FAIL::history"]["status"], "Failed")
-        self.assertIn("액션 로그 다운로드 실패", final_updates["brand_a::ACT_FAIL::history"]["message"])
+        self.assertIn(runtime_module.HISTORY_FAILED_PREFIX, final_updates["brand_a::ACT_FAIL::history"]["message"])
         self.assertEqual(final_updates["brand_a::ACT_EMPTY::history"]["status"], "Skipped")
         self.assertEqual(
             final_updates["brand_a::ACT_EMPTY::history"]["message"],
-            "수집된 액션 로그가 없어 파일을 생성하지 않았습니다.",
+            NO_ACTION_LOG_ROWS_MESSAGE,
         )
         self.assertEqual(final_updates["brand_a::ACT_OK::history"]["status"], "Completed")
         self.assertEqual(len(history_results), 1)
@@ -348,9 +352,9 @@ class HistoryRuntimeTests(unittest.TestCase):
         history_results = [event for event in events if event.get("type") == "history_result"]
 
         self.assertEqual(final_updates[-1]["status"], "Failed")
-        self.assertIn("부분 저장완료:", final_updates[-1]["message"])
+        self.assertIn(runtime_module.HISTORY_PARTIAL_SAVED_PREFIX, final_updates[-1]["message"])
         self.assertEqual(len(history_results), 1)
-        self.assertIn("부분 저장완료:", history_results[0]["message"])
+        self.assertIn(runtime_module.HISTORY_PARTIAL_SAVED_PREFIX, history_results[0]["message"])
         self.assertEqual(len(saved_outputs), 1)
         self.assertEqual(len(result.outputs), 1)
         self.assertEqual(result.outputs[0].failed_accounts, ["222/999"])
@@ -423,10 +427,75 @@ class HistoryRuntimeTests(unittest.TestCase):
             and event.get("status") == "Waiting"
         ]
         self.assertTrue(queued_updates)
-        self.assertEqual(
-            queued_updates[0]["message"],
-            "앞선 액티비티 처리 대기중입니다.",
+        self.assertIn(
+            runtime_module.HISTORY_WAITING_FOR_PRIOR_ACTIVITY_MESSAGE,
+            [event["message"] for event in queued_updates],
         )
+
+    def test_run_meta_history_with_plan_reveals_window_when_relogin_is_required(self) -> None:
+        root = self._temp_root()
+        page = _FakePage()
+        context = _FakeContext(page)
+        events: list[dict[str, object]] = []
+        logger = _DummyLogger()
+        plan = [
+            HistoryExecutionPlan(
+                brand_code="brand_a",
+                brand_name="Brand A",
+                activity_name="ACT_LOGIN",
+                account_targets=[HistoryAccountTarget(act="111", business_id="999")],
+            )
+        ]
+
+        def _fake_wait_for_login_context(*args, **kwargs):
+            status_callback = kwargs["status_callback"]
+            status_callback(
+                "login_page",
+                "https://business.facebook.com/business/loginpage/?next=https://business.facebook.com/",
+            )
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"playwright.sync_api": SimpleNamespace(sync_playwright=lambda: _FakeSyncPlaywright())},
+            ),
+            patch.object(
+                runtime_module,
+                "prepare_meta_user_data_dir",
+                return_value=PreparedMetaUserDataDir(
+                    requested_dir=root / "requested-profile",
+                    effective_dir=root / "resolved-profile",
+                    legacy_dir=root / "legacy-profile",
+                    migration_mode="none",
+                    warning="",
+                ),
+            ),
+            patch.object(runtime_module, "_setup_logger", return_value=logger),
+            patch.object(runtime_module, "_launch_context_with_fallback", return_value=context),
+            patch.object(runtime_module, "_minimize_history_window") as minimize_mock,
+            patch.object(runtime_module, "_maximize_history_window") as maximize_mock,
+            patch.object(runtime_module, "_bring_history_window_to_front") as focus_mock,
+            patch.object(runtime_module, "_wait_for_login_context", side_effect=_fake_wait_for_login_context),
+            patch.object(
+                runtime_module,
+                "_collect_for_account",
+                return_value=[["Activity", "Details", "Item", "User", "2026-04-20 12:00:00"]],
+            ),
+            patch.object(runtime_module, "_save_activity_xlsx"),
+        ):
+            result = runtime_module.run_meta_history_with_plan(
+                plan=plan,
+                browser="msedge",
+                action_log_dir=root / "output",
+                trace_dir=root / "trace",
+                user_data_dir=root / "user_data",
+                progress_cb=events.append,
+            )
+
+        self.assertEqual(len(result.outputs), 1)
+        minimize_mock.assert_called_once()
+        maximize_mock.assert_called_once()
+        focus_mock.assert_called_once()
 
     def test_run_meta_history_with_plan_recovers_after_dead_page_once(self) -> None:
         root = self._temp_root()

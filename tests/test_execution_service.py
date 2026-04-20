@@ -339,6 +339,61 @@ class ExecutionServiceTests(unittest.TestCase):
         self.assertEqual(report_calls, [resolved_profile])
         self.assertEqual(history_calls, [resolved_profile])
 
+    def test_worker_marks_history_rows_waiting_for_login_before_history_runner(self) -> None:
+        store = ExecutionStateStore()
+        report_plan = _sample_report_plan()
+        history_plan = _sample_history_plan()
+        store.initialize_rows(
+            report_plan=report_plan,
+            history_plan=history_plan,
+            enable_report_download=True,
+            enable_action_log_download=True,
+        )
+
+        def _fake_report_runner(**kwargs):
+            return SimpleNamespace(outputs=[SimpleNamespace(workbook_path="report.xlsx")])
+
+        def _fake_history_runner(**kwargs):
+            snapshot = store.snapshot()
+            self.assertEqual(len(snapshot["history_rows"]), 1)
+            self.assertEqual(snapshot["history_rows"][0].status, "Waiting")
+            self.assertEqual(
+                snapshot["history_rows"][0].message,
+                execution_service_module.HISTORY_WAITING_FOR_LOGIN_MESSAGE,
+            )
+            return SimpleNamespace(outputs=[])
+
+        with (
+            patch.object(
+                execution_service_module,
+                "prepare_meta_user_data_dir",
+                return_value=PreparedMetaUserDataDir(
+                    requested_dir=Path("requested-profile"),
+                    effective_dir=Path("requested-profile"),
+                    legacy_dir=Path("legacy-profile"),
+                    migration_mode="none",
+                    warning="",
+                ),
+            ),
+            patch.object(execution_service_module, "_load_report_runner", return_value=_fake_report_runner),
+            patch.object(execution_service_module, "_load_history_runner", return_value=_fake_history_runner),
+        ):
+            execution_service_module._worker(
+                store=store,
+                report_plan=report_plan,
+                history_plan=history_plan,
+                enable_report_download=True,
+                enable_action_log_download=True,
+                view_event_source="1",
+                export_event_source="1",
+                browser="msedge",
+                output_dir=Path("."),
+                raw_dir=Path("."),
+                trace_dir=Path("."),
+                action_log_dir=Path("."),
+                user_data_dir=Path("requested-profile"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

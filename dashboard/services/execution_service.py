@@ -680,6 +680,10 @@ def _worker(
                 )
 
         if enable_action_log_download:
+            store.mark_pending_history_rows(
+                status="Waiting",
+                message=HISTORY_WAITING_FOR_LOGIN_MESSAGE,
+            )
             run_meta_history_with_plan = _load_history_runner()
             history_phase_started = True
             history_result = run_meta_history_with_plan(

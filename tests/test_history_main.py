@@ -70,6 +70,31 @@ class HistoryMainTests(unittest.TestCase):
         self.assertEqual(page.goto_calls, [(ready_url, "domcontentloaded")])
         self.assertEqual(page.url, ready_url)
 
+    def test_wait_for_login_context_reports_login_page_state(self) -> None:
+        page = _FakePage(
+            initial_url=(
+                "https://business.facebook.com/business/loginpage/?"
+                "next=https://business.facebook.com/"
+            )
+        )
+        seen_states: list[tuple[str, str]] = []
+
+        with patch.object(
+            history_main_module.time,
+            "time",
+            side_effect=[0, 0, 2, 6],
+        ):
+            with self.assertRaises(history_main_module.AutomationError):
+                history_main_module._wait_for_login_context(
+                    page,
+                    timeout_sec=5,
+                    status_callback=lambda state, url: seen_states.append((state, url)),
+                )
+
+        self.assertTrue(seen_states)
+        self.assertEqual(seen_states[0][0], "login_page")
+        self.assertIn("business/loginpage", seen_states[0][1])
+
     def test_goto_campaigns_with_bootstrap_filter_passes_ready_url(self) -> None:
         page = _FakePage(initial_url="https://business.facebook.com/")
         account = AccountTarget(act="111", business_id="222")

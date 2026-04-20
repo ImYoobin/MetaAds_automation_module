@@ -47,6 +47,7 @@ HISTORY_RUNNING_ACCOUNT_TEMPLATE = "\uacc4\uc815 {current}/{total} \uc218\uc9d1 
 HISTORY_FAILED_PREFIX = "\uc561\uc158 \ub85c\uadf8 \ub2e4\uc6b4\ub85c\ub4dc \uc2e4\ud328"
 HISTORY_PARTIAL_SAVED_PREFIX = "\ubd80\ubd84 \uc800\uc7a5\uc644\ub8cc"
 HISTORY_SAVED_PREFIX = "\uc561\uc158 \ub85c\uadf8 \uc800\uc7a5\uc644\ub8cc"
+HISTORY_WAITING_FOR_LOGIN_MESSAGE = "\ub85c\uadf8\uc778 \ub300\uae30\uc911\uc785\ub2c8\ub2e4."
 
 
 def _safe_text(value: Any) -> str:
@@ -72,6 +73,29 @@ def _resolve_log_file(logger: logging.Logger) -> str:
         if filename:
             return filename
     return ""
+
+
+def _emit_history_waiting_rows(
+    *,
+    progress_cb: ProgressCallback | None,
+    plan: list[HistoryExecutionPlan],
+    message: str,
+) -> None:
+    for activity_plan in plan:
+        if not activity_plan.account_targets:
+            continue
+        _emit(
+            progress_cb,
+            {
+                "type": "history_row_update",
+                "row_id": _history_row_id(
+                    brand_code=activity_plan.brand_code,
+                    activity_name=activity_plan.activity_name,
+                ),
+                "status": "Waiting",
+                "message": message,
+            },
+        )
 
 
 def _normalize_browser(browser: str) -> str:
@@ -183,6 +207,60 @@ def _launch_context_for_profile(
     )
     context.set_default_timeout(action_timeout_ms)
     return context
+
+
+def _set_page_window_state(*, page: Any, logger: logging.Logger, state: str) -> bool:
+    try:
+        context = getattr(page, "context", None)
+        if context is None:
+            return False
+        cdp_session = context.new_cdp_session(page)
+        try:
+            window_info = cdp_session.send("Browser.getWindowForTarget", {})
+            window_id = int((window_info or {}).get("windowId") or 0)
+            if window_id <= 0:
+                return False
+            cdp_session.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": state}},
+            )
+            logger.info("history_browser_window_state_changed state=%s", state)
+            return True
+        finally:
+            detach = getattr(cdp_session, "detach", None)
+            if callable(detach):
+                try:
+                    detach()
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception as exc:  # noqa: BLE001
+        logger.info(
+            "history_browser_window_state_change_failed state=%s error=%s",
+            state,
+            _format_exception_message(exc),
+        )
+        return False
+
+
+def _minimize_history_window(*, page: Any, logger: logging.Logger) -> bool:
+    return _set_page_window_state(page=page, logger=logger, state="minimized")
+
+
+def _maximize_history_window(*, page: Any, logger: logging.Logger) -> bool:
+    return _set_page_window_state(page=page, logger=logger, state="maximized")
+
+
+def _bring_history_window_to_front(*, page: Any, logger: logging.Logger) -> bool:
+    try:
+        page.bring_to_front()
+        logger.info("history_browser_brought_to_front")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.info(
+            "history_browser_bring_to_front_failed error=%s",
+            _format_exception_message(exc),
+        )
+        return False
 
 
 def _launch_context_with_fallback(
@@ -385,6 +463,11 @@ def run_meta_history_with_plan(
             "message": "Waiting for Meta login in browser.",
         },
     )
+    _emit_history_waiting_rows(
+        progress_cb=progress_cb,
+        plan=plan,
+        message=HISTORY_WAITING_FOR_LOGIN_MESSAGE,
+    )
 
     try:
         from playwright.sync_api import sync_playwright  # type: ignore
@@ -410,7 +493,18 @@ def run_meta_history_with_plan(
             )
             try:
                 page = _get_runtime_page(context)
+                _minimize_history_window(page=page, logger=logger)
                 startup_url = _resolve_startup_bootstrap_url(plan)
+                reauth_window_revealed = False
+
+                def _handle_login_context_state(state: str, url: str) -> None:
+                    nonlocal reauth_window_revealed, page
+                    logger.info("history_startup_context state=%s url=%s", state, url)
+                    if state in {"login_page", "account_chooser"} and not reauth_window_revealed:
+                        _maximize_history_window(page=page, logger=logger)
+                        _bring_history_window_to_front(page=page, logger=logger)
+                        reauth_window_revealed = True
+
                 if startup_url:
                     page.goto(startup_url, wait_until="domcontentloaded")
                     logger.info(
@@ -421,6 +515,8 @@ def run_meta_history_with_plan(
                         page,
                         timeout_sec=options.login_timeout_sec,
                         ready_url=startup_url,
+                        logger=logger,
+                        status_callback=_handle_login_context_state,
                     )
                 else:
                     page.goto("https://business.facebook.com/", wait_until="domcontentloaded")
