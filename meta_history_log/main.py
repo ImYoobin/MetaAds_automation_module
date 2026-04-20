@@ -12,7 +12,7 @@ Core behavior:
 - For each enabled activity_prefix(activity.name), open Ad Sets page per account.
 - Apply filter: Campaign name contains all of {activity_prefix}_
 - Select all ad sets -> open Activity History
-- Force Last 7 days and scope=Ad Sets via UI
+    - Force Last 14 days and scope=Ad Sets via UI
 - Collect table rows (with lazy-load scrolling)
 - Save one xlsx per activity_prefix
 """
@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from meta_core.pathing import build_meta_shared_user_data_dir, prepare_meta_user_data_dir
+
 
 HISTORY_COLUMNS: list[str] = [
     "Activity",
@@ -44,11 +46,12 @@ HISTORY_COLUMNS: list[str] = [
 
 DEFAULT_LOGIN_TIMEOUT_SEC = 300
 DEFAULT_ACTION_TIMEOUT_MS = 15_000
-DEFAULT_TABLE_LOAD_TIMEOUT_SEC = 30
-DEFAULT_LAZY_SCROLL_PAUSE_SEC = 1.2
+DEFAULT_TABLE_LOAD_TIMEOUT_SEC = 12
+DEFAULT_LAZY_SCROLL_PAUSE_SEC = 0.35
 DEFAULT_LAZY_SCROLL_MAX_ROUNDS = 120
-DEFAULT_LAZY_SCROLL_NO_NEW_ROUNDS = 3
+DEFAULT_LAZY_SCROLL_NO_NEW_ROUNDS = 2
 DEFAULT_STEP_RETRY_COUNT = 2
+DEFAULT_ACCOUNT_COLLECT_TIMEOUT_SEC = 120
 DEFAULT_FILTER_SHELL_WAIT_MS = 15_000
 DEFAULT_FILTER_INPUT_MOUNT_MS = 3_500
 DEFAULT_FILTER_POLL_MS = 100
@@ -72,6 +75,7 @@ KR_CANCEL = "\ucde8\uc18c"
 KR_HISTORY = "\uae30\ub85d"
 KR_LAST = "\ucd5c\uadfc"
 KR_DAY = "\uc77c"
+KR_LAST_14_DAYS = "\ucd5c\uadfc 14\uc77c"
 KR_UPDATE = "\uc5c5\ub370\uc774\ud2b8"
 KR_ACTIVITY_HISTORY = "\ud65c\ub3d9 \uae30\ub85d"
 KR_AD_SETS = "\uad11\uace0 \uc138\ud2b8"
@@ -79,6 +83,12 @@ KR_ACTIVITY = "\ud65c\ub3d9"
 KR_FILTERING_SEARCH = "\ud544\ud130\ub9c1 \uac80\uc0c9"
 KR_SELECT_ALL_ADS = "\ubaa8\ub4e0 \uad11\uace0\ub97c \uc120\ud0dd\ud558\uae30 \uc704\ud55c \uccb4\ud06c \ubc15\uc2a4"
 KR_NAME = "\uc774\ub984"
+KR_NO_RESULTS_FOUND = "\uacb0\uacfc\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4"
+KR_NO_RESULTS_FOUND_ALT = "\uacb0\uacfc\uac00 \uc5c6\uc2b5\ub2c8\ub2e4"
+
+NO_TARGET_ACCOUNTS_MESSAGE = "Report URL\uc5d0\uc11c \uc2e4\ud589 \ub300\uc0c1 \uacc4\uc815\uc744 \ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4."
+NO_ACTION_LOG_ROWS_MESSAGE = "\uc218\uc9d1\ub41c \uc561\uc158 \ub85c\uadf8\uac00 \uc5c6\uc5b4 \ud30c\uc77c\uc744 \uc0dd\uc131\ud558\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4."
+HISTORY_HEADER_EN = tuple(item.lower() for item in HISTORY_COLUMNS)
 
 RE_CAMPAIGN_NAME = re.compile(rf"(Campaign name|{re.escape(KR_CAMPAIGN_NAME)})", re.IGNORECASE)
 RE_CONTAINS_ALL = re.compile(rf"(contains all of|{re.escape(KR_CONTAINS_ALL)})", re.IGNORECASE)
@@ -123,6 +133,16 @@ class RunnerOptions:
 
 def _safe_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _format_exception_message(exc: BaseException) -> str:
+    message = _safe_text(exc)
+    if message:
+        return message
+    message = _safe_text(repr(exc))
+    if message:
+        return message
+    return exc.__class__.__name__
 
 
 def _as_bool(value: Any, default: bool) -> bool:
@@ -231,16 +251,31 @@ def _read_yaml_or_json(path: Path) -> dict[str, Any]:
     return parsed
 
 
+def _append_candidate_root(roots: list[Path], candidate: Path) -> None:
+    resolved = candidate.resolve()
+    if resolved.exists() and resolved not in roots:
+        roots.append(resolved)
+
+
 def _resolve_paths(
     *,
     script_dir: Path,
     user_config: dict[str, Any],
 ) -> tuple[Path, Path]:
-    candidate_roots: list[Path]
+    candidate_roots: list[Path] = []
     if script_dir.name.lower() == "meta_history_log":
-        candidate_roots = [script_dir.parent, script_dir]
+        if script_dir.parent.name.lower() == "meta_automation_module":
+            _append_candidate_root(candidate_roots, script_dir.parent)
+        canonical_module_root = script_dir.parent.parent / "module_source" / "meta_automation_module"
+        _append_candidate_root(candidate_roots, canonical_module_root)
+        _append_candidate_root(candidate_roots, script_dir.parent)
+        _append_candidate_root(candidate_roots, script_dir)
     else:
-        candidate_roots = [script_dir, script_dir.parent]
+        _append_candidate_root(candidate_roots, script_dir)
+        _append_candidate_root(candidate_roots, script_dir.parent)
+
+    if not candidate_roots:
+        candidate_roots = [script_dir.resolve()]
 
     default_catalog: Path | None = None
     default_runtime: Path | None = None
@@ -271,6 +306,39 @@ def _resolve_paths(
     return catalog_path, runtime_path
 
 
+def _infer_base_parent_dir_from_legacy_runtime_settings(
+    *,
+    script_dir: Path,
+    runtime_settings: dict[str, Any],
+) -> str:
+    for key in ("output_dir", "downloads_dir", "logs_dir"):
+        raw_value = _safe_text(runtime_settings.get(key))
+        if not raw_value:
+            continue
+        try:
+            candidate_path = _expand_path(raw_value, base_dir=script_dir)
+        except Exception:  # noqa: BLE001
+            continue
+        for ancestor in (candidate_path, *candidate_path.parents):
+            if ancestor.name.lower() in {"metaadsexport", "googleadsexport"}:
+                return str(ancestor.parent)
+    return ""
+
+
+def _resolve_base_parent_dir(
+    *,
+    script_dir: Path,
+    runtime_settings: dict[str, Any],
+) -> Path:
+    raw_parent = _safe_text(runtime_settings.get("base_parent_dir")) or _infer_base_parent_dir_from_legacy_runtime_settings(
+        script_dir=script_dir,
+        runtime_settings=runtime_settings,
+    )
+    if not raw_parent:
+        raw_parent = r"%USERPROFILE%"
+    return _expand_path(raw_parent, base_dir=script_dir)
+
+
 def _build_runner_options(
     *,
     script_dir: Path,
@@ -292,28 +360,20 @@ def _build_runner_options(
     headless = _as_bool(runtime_settings.get("history_headless"), False)
     headless = _as_bool(runner_cfg.get("headless"), headless)
 
-    default_output_base = _expand_path(
-        _safe_text(runtime_settings.get("output_dir")) or r"%USERPROFILE%\MetaAdsExport\output",
-        base_dir=script_dir,
+    base_parent_dir = _resolve_base_parent_dir(
+        script_dir=script_dir,
+        runtime_settings=runtime_settings,
     )
-    output_dir = (default_output_base / "history_logs").resolve()
+    export_root = (base_parent_dir / "MetaAdsExport").resolve()
+    output_root = (export_root / "output").resolve()
+    trace_root = (export_root / "trace").resolve()
+    output_dir = (output_root / "action_log").resolve()
 
-    default_user_data = _expand_path(
-        _safe_text(runtime_settings.get("history_user_data_dir"))
-        or r"%USERPROFILE%\MetaAdsExport\user_data\meta_history_log",
-        base_dir=script_dir,
-    )
+    default_user_data = build_meta_shared_user_data_dir(base_parent_dir, browser)
     user_data_dir = _expand_path(
-        _safe_text(runner_cfg.get("user_data_dir")) or str(default_user_data),
-        base_dir=script_dir,
-    )
-
-    log_dir = _expand_path(
-        _safe_text(runner_cfg.get("log_dir")) or str(output_dir / "logs"),
-        base_dir=script_dir,
-    )
-    screenshot_dir = _expand_path(
-        _safe_text(runner_cfg.get("screenshot_dir")) or str(output_dir / "screenshots"),
+        _safe_text(runner_cfg.get("user_data_dir"))
+        or _safe_text(runtime_settings.get("history_user_data_dir"))
+        or str(default_user_data),
         base_dir=script_dir,
     )
 
@@ -322,8 +382,8 @@ def _build_runner_options(
         headless=headless,
         user_data_dir=user_data_dir,
         output_dir=output_dir,
-        log_dir=log_dir,
-        screenshot_dir=screenshot_dir,
+        log_dir=trace_root,
+        screenshot_dir=(trace_root / "screenshots").resolve(),
         login_timeout_sec=_as_int(
             runner_cfg.get("login_timeout_sec"),
             _as_int(runtime_settings.get("history_login_timeout_sec"), DEFAULT_LOGIN_TIMEOUT_SEC),
@@ -406,7 +466,7 @@ def _extract_accounts_by_activity(
             if not isinstance(reports, dict):
                 warnings.append(
                     f"{brand_name}/{activity_prefix}: `reports` missing or invalid; "
-                    "activity will produce an empty output unless account URLs exist."
+                    "activity will be skipped unless account URLs exist."
                 )
                 continue
 
@@ -440,7 +500,7 @@ def _extract_accounts_by_activity(
 
             if url_count == 0:
                 warnings.append(
-                    f"{brand_name}/{activity_prefix}: no report URL found; this activity will output an empty xlsx."
+                    f"{brand_name}/{activity_prefix}: no report URL found; this activity will be skipped."
                 )
 
     out: OrderedDict[str, list[AccountTarget]] = OrderedDict()
@@ -456,6 +516,41 @@ def _table_locator(page: Any) -> Any:
 
 def _normalize_cell(text: str) -> str:
     return re.sub(r"\s+", " ", _safe_text(text))
+
+
+def _normalize_history_cell(text: Any, *, preserve_linebreaks: bool = False) -> str:
+    raw = str(text or "").replace("\u200b", "")
+    raw = raw.replace("\r\n", "\n").replace("\r", "\n")
+    if preserve_linebreaks:
+        lines = []
+        for line in raw.split("\n"):
+            cleaned = re.sub(r"[ \t\f\v]+", " ", line).strip()
+            if cleaned:
+                lines.append(cleaned)
+        return "\n".join(lines).strip()
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def _normalize_history_row(raw_row: list[Any]) -> list[str]:
+    normalized: list[str] = []
+    for index in range(5):
+        value = raw_row[index] if index < len(raw_row) else ""
+        normalized.append(
+            _normalize_history_cell(
+                value,
+                preserve_linebreaks=index == 2,
+            )
+        )
+    return normalized
+
+
+def _is_history_header_row(row: list[str]) -> bool:
+    if len(row) < 5:
+        return False
+    normalized = tuple(_normalize_history_cell(item).lower() for item in row[:5])
+    if normalized == HISTORY_HEADER_EN:
+        return True
+    return _normalize_history_cell(row[0]).lower() in {"activity", KR_ACTIVITY.lower()}
 
 
 def _capture_screenshot(
@@ -528,19 +623,59 @@ def _run_step(
                 shot or "<none>",
             )
             if attempt < options.step_retry_count:
-                page.wait_for_timeout(900 * attempt)
+                try:
+                    page.wait_for_timeout(900 * attempt)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "step_retry_wait_skipped activity=%s account=%s step=%s attempt=%s/%s",
+                        activity_prefix,
+                        f"{account.act}/{account.business_id}" if account else "-",
+                        step_name,
+                        attempt,
+                        options.step_retry_count,
+                    )
     raise AutomationError(
         f"Stage failed after retries: {step_name} "
         f"(activity={activity_prefix}, account={account.act if account else '-'})"
     ) from last_exc
 
 
-def _wait_for_login_context(page: Any, *, timeout_sec: int) -> None:
+def _is_ads_manager_ready_url(url: str) -> bool:
+    return "adsmanager.facebook.com/adsmanager" in _safe_text(url).lower()
+
+
+def _is_meta_business_home_url(url: str) -> bool:
+    normalized = _safe_text(url).lower()
+    return normalized.startswith("https://business.facebook.com/latest/home") or normalized.startswith(
+        "https://business.facebook.com/home"
+    ) or normalized in {
+        "https://business.facebook.com",
+        "https://business.facebook.com/",
+    }
+
+
+def _wait_for_login_context(
+    page: Any,
+    *,
+    timeout_sec: int,
+    ready_url: str = "",
+) -> None:
     deadline = time.time() + max(5, timeout_sec)
+    normalized_ready_url = _safe_text(ready_url)
+    last_ready_redirect_at = 0.0
     while time.time() < deadline:
-        url = _safe_text(page.url).lower()
-        if "adsmanager.facebook.com/adsmanager" in url:
+        url = _safe_text(page.url)
+        if _is_ads_manager_ready_url(url):
             return
+        if normalized_ready_url and _is_meta_business_home_url(url):
+            now = time.time()
+            if now - last_ready_redirect_at >= 3:
+                last_ready_redirect_at = now
+                try:
+                    page.goto(normalized_ready_url, wait_until="domcontentloaded")
+                    continue
+                except Exception:  # noqa: BLE001
+                    pass
         page.wait_for_timeout(2000)
     raise AutomationError(
         "Login/session not ready for Ads Manager. "
@@ -566,13 +701,28 @@ def _build_campaign_filter_set(*, activity_prefix: str) -> str:
     )
 
 
+def _build_campaigns_bootstrap_url(*, account: AccountTarget, activity_prefix: str) -> str:
+    params = {
+        "act": account.act,
+        "business_id": account.business_id,
+        "columns": "name,campaign_group_name,campaign_id",
+        "attribution_windows": "default",
+        "filter_set": _build_campaign_filter_set(activity_prefix=activity_prefix),
+    }
+    return (
+        "https://adsmanager.facebook.com/adsmanager/manage/campaigns?"
+        f"{urlencode(params)}"
+    )
+
+
 def _partition_paths_by_run_date(options: RunnerOptions, *, run_date_token: str) -> RunnerOptions:
-    day_dir = (options.output_dir / run_date_token).resolve()
+    output_day_dir = (options.output_dir / run_date_token).resolve()
+    trace_day_dir = (options.log_dir / run_date_token).resolve()
     return replace(
         options,
-        output_dir=day_dir,
-        log_dir=(day_dir / "logs").resolve(),
-        screenshot_dir=(day_dir / "screenshots").resolve(),
+        output_dir=output_day_dir,
+        log_dir=trace_day_dir,
+        screenshot_dir=(trace_day_dir / "screenshots").resolve(),
     )
 
 
@@ -583,19 +733,16 @@ def _goto_campaigns_with_bootstrap_filter(
     activity_prefix: str,
     options: RunnerOptions,
 ) -> None:
-    params = {
-        "act": account.act,
-        "business_id": account.business_id,
-        "columns": "name,campaign_group_name,campaign_id",
-        "attribution_windows": "default",
-        "filter_set": _build_campaign_filter_set(activity_prefix=activity_prefix),
-    }
-    url = (
-        "https://adsmanager.facebook.com/adsmanager/manage/campaigns?"
-        f"{urlencode(params)}"
+    url = _build_campaigns_bootstrap_url(
+        account=account,
+        activity_prefix=activity_prefix,
     )
     page.goto(url, wait_until="domcontentloaded")
-    _wait_for_login_context(page, timeout_sec=options.login_timeout_sec)
+    _wait_for_login_context(
+        page,
+        timeout_sec=options.login_timeout_sec,
+        ready_url=url,
+    )
     page.wait_for_timeout(1200)
 
 
@@ -1077,8 +1224,13 @@ def _reload_adsets_once(
         account.act,
         account.business_id,
     )
+    ready_url = _safe_text(page.url)
     page.reload(wait_until="domcontentloaded")
-    _wait_for_login_context(page, timeout_sec=options.login_timeout_sec)
+    _wait_for_login_context(
+        page,
+        timeout_sec=options.login_timeout_sec,
+        ready_url=ready_url if _is_ads_manager_ready_url(ready_url) else "",
+    )
     page.wait_for_timeout(1200)
 
 
@@ -1740,42 +1892,192 @@ def _open_history_panel(page: Any) -> None:
         except Exception:  # noqa: BLE001
             page.keyboard.press("Control+i")
 
-    page.wait_for_timeout(1200)
+    page.wait_for_timeout(700)
     table.wait_for(state="visible", timeout=20_000)
 
 
-def _ensure_last_7_days(page: Any) -> None:
-    # NOTE: Date-range button text contains dynamic date strings.
-    # Selector intentionally matches partial EN/KR text instead of exact value.
-    date_btn = page.locator(
+def _open_date_range_panel(page: Any) -> None:
+    date_btn_selector = (
         "xpath=(//div[@role='button' and "
         "((contains(normalize-space(.),'Last') and contains(normalize-space(.),'days')) "
         f"or (contains(normalize-space(.),'{KR_LAST}') and contains(normalize-space(.),'{KR_DAY}')))"
         "])[1]"
-    ).first
-    date_btn.wait_for(state="visible", timeout=10_000)
-    date_btn.click(timeout=5000)
+    )
 
-    radio = page.locator("input[type='radio'][value='last_7d']").first
-    radio.wait_for(state="visible", timeout=10_000)
-    if not radio.is_checked():
-        radio.check(timeout=5000, force=True)
+    def _panel_open() -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    f"""() => {{
+                        const isVisible = (node) => {{
+                          if (!node) return false;
+                          const style = window.getComputedStyle(node);
+                          const rect = node.getBoundingClientRect();
+                          return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                        }};
+                        const textMatches = (node) => {{
+                          const text = String(node?.textContent || "").replace(/\\s+/g, " ").trim();
+                          const aria = String(node?.getAttribute?.("aria-label") || "").replace(/\\s+/g, " ").trim();
+                          const pattern = /^(Update|{re.escape(KR_UPDATE)})$/;
+                          return pattern.test(text) || pattern.test(aria);
+                        }};
+                        const radioVisible = Array.from(document.querySelectorAll("input[type='radio'][value='last_14d']")).some(isVisible);
+                        const updateVisible = Array.from(document.querySelectorAll("button, div[role='button']")).some((node) => isVisible(node) && textMatches(node));
+                        return radioVisible || updateVisible;
+                    }}"""
+                )
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _wait_for_panel(timeout_ms: int) -> bool:
+        deadline = time.time() + max(1.0, timeout_ms / 1000.0)
+        while time.time() < deadline:
+            if _panel_open():
+                return True
+            page.wait_for_timeout(140)
+        return _panel_open()
 
     last_exc: Exception | None = None
-    for _ in range(4):
+    for attempt in range(1, 5):
+        if _panel_open():
+            return
+        date_btn = page.locator(date_btn_selector).first
+        date_btn.wait_for(state="visible", timeout=14_000)
+        page.wait_for_timeout(150)
+        try:
+            date_btn.click(timeout=7_500)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if _panel_open():
+                return
+            try:
+                date_btn.evaluate("(el) => el.click()")
+            except Exception as js_exc:  # noqa: BLE001
+                last_exc = js_exc
+
+        if _wait_for_panel(timeout_ms=5_000 + (attempt * 1_500)):
+            return
+
+        try:
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001
+            pass
+        page.wait_for_timeout(250 + (attempt * 100))
+
+    raise AutomationError(f"Could not open date range panel: {last_exc}")
+
+
+def _select_last_14_day_preset(page: Any) -> None:
+    last_exc: Exception | None = None
+    radio = page.locator("input[type='radio'][value='last_14d']").first
+    try:
+        radio.wait_for(state="visible", timeout=7_000)
+        if not radio.is_checked():
+            radio.check(timeout=7_000, force=True)
+        return
+    except Exception as exc:
+        last_exc = exc
+
+    last_14_label = re.compile(rf"^(Last 14 days|{re.escape(KR_LAST_14_DAYS)})$")
+    try:
+        page.get_by_role("radio", name=last_14_label).first.check(timeout=7_000, force=True)
+        return
+    except Exception as exc:
+        last_exc = exc
+
+    preset = page.locator(
+        "xpath=(//*[self::label or self::span or self::div]"
+        "[contains(normalize-space(.),'Last 14 days') "
+        f"or contains(normalize-space(.),'{KR_LAST_14_DAYS}')])[1]"
+    ).first
+    try:
+        preset.wait_for(state="visible", timeout=7_000)
+        preset.click(timeout=7_000)
+        return
+    except Exception as exc:
+        last_exc = exc
+    raise AutomationError(f"Could not select Last 14 days preset: {last_exc}")
+
+
+def _date_range_panel_is_open(page: Any) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                f"""() => {{
+                    const isVisible = (node) => {{
+                      if (!node) return false;
+                      const style = window.getComputedStyle(node);
+                      const rect = node.getBoundingClientRect();
+                      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    }};
+                    const textMatches = (node) => {{
+                      const text = String(node?.textContent || "").replace(/\\s+/g, " ").trim();
+                      const aria = String(node?.getAttribute?.("aria-label") || "").replace(/\\s+/g, " ").trim();
+                      const pattern = /^(Update|{re.escape(KR_UPDATE)})$/;
+                      return pattern.test(text) || pattern.test(aria);
+                    }};
+                    const radioVisible = Array.from(document.querySelectorAll("input[type='radio'][value='last_14d']")).some(isVisible);
+                    const updateVisible = Array.from(document.querySelectorAll("button, div[role='button']")).some((node) => isVisible(node) && textMatches(node));
+                    return radioVisible || updateVisible;
+                }}"""
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _wait_for_date_range_panel_closed(page: Any, *, timeout_ms: int) -> bool:
+    deadline = time.time() + max(1.0, timeout_ms / 1000.0)
+    while time.time() < deadline:
+        if not _date_range_panel_is_open(page):
+            return True
+        page.wait_for_timeout(140)
+    return not _date_range_panel_is_open(page)
+
+
+def _click_date_update_button(page: Any) -> None:
+    last_exc: Exception | None = None
+    for attempt in range(5):
         update_btn = page.get_by_role(
             "button", name=re.compile(rf"^(Update|{re.escape(KR_UPDATE)})$")
         ).first
         try:
-            update_btn.wait_for(state="visible", timeout=3000)
-            update_btn.click(timeout=5000)
-            break
+            update_btn.wait_for(state="visible", timeout=6_000)
+            page.wait_for_timeout(250)
+            try:
+                update_btn.click(timeout=7_000)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if _wait_for_date_range_panel_closed(page, timeout_ms=2_500):
+                    return
+                update_btn.evaluate("(el) => el.click()")
+            if _wait_for_date_range_panel_closed(page, timeout_ms=5_000 + (attempt * 1_000)):
+                return
+            last_exc = AutomationError("Date range panel did not close after Update click")
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            page.wait_for_timeout(250)
-    else:
-        raise AutomationError(f"Could not click date Update button: {last_exc}")
-    page.wait_for_timeout(1200)
+            if attempt < 4:
+                page.wait_for_timeout(400 + (attempt * 150))
+                try:
+                    page.keyboard.press("Escape")
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    _open_date_range_panel(page)
+                    _select_last_14_day_preset(page)
+                except Exception:
+                    pass
+    raise AutomationError(f"Could not click date Update button: {last_exc}")
+
+
+def _ensure_last_14_days(page: Any) -> None:
+    # NOTE: Date-range button text contains dynamic date strings.
+    # Selector intentionally matches partial EN/KR text instead of exact value.
+    _open_date_range_panel(page)
+    _select_last_14_day_preset(page)
+    _click_date_update_button(page)
+    page.wait_for_timeout(700)
 
 
 def _ensure_scope_adsets(page: Any) -> None:
@@ -1797,27 +2099,200 @@ def _ensure_scope_adsets(page: Any) -> None:
             "menuitemradio",
             name=re.compile(rf"^(Ad Sets|{re.escape(KR_AD_SETS)})$"),
         ).first.click(timeout=5000)
-    page.wait_for_timeout(900)
+    page.wait_for_timeout(450)
 
 
-def _extract_visible_rows(table: Any) -> list[list[str]]:
-    rows: list[list[str]] = []
-    row_locator = table.locator("tbody tr[role='row']")
-    row_count = row_locator.count()
-    for row_idx in range(row_count):
-        cell_locator = row_locator.nth(row_idx).locator("td[role='gridcell']")
-        cell_count = cell_locator.count()
-        if cell_count < 5:
+def _history_table_snapshot(page: Any, table: Any) -> dict[str, Any]:
+    try:
+        payload = table.evaluate(
+            """(el) => {
+                const normalizeRaw = (value) => String(value ?? "")
+                  .replace(/\\u200b/g, "")
+                  .replace(/\\r\\n/g, "\\n")
+                  .replace(/\\r/g, "\\n")
+                  .trim();
+                const isVisible = (node) => {
+                  if (!node) return false;
+                  const style = window.getComputedStyle(node);
+                  const rect = node.getBoundingClientRect();
+                  return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                };
+                const rows = Array.from(
+                  el.querySelectorAll("tbody tr[role='row'], tbody tr")
+                )
+                  .filter(isVisible)
+                  .map((row) =>
+                    Array.from(row.querySelectorAll("td[role='gridcell'], td"))
+                      .slice(0, 5)
+                      .map((cell) => normalizeRaw(cell.innerText || cell.textContent || ""))
+                  )
+                  .filter((row) => row.length >= 5 && row.some((cell) => cell.trim().length > 0));
+                const headerCells = Array.from(
+                  el.querySelectorAll("thead th, thead [role='columnheader'], [role='columnheader']")
+                )
+                  .filter(isVisible)
+                  .slice(0, 5)
+                  .map((node) => normalizeRaw(node.innerText || node.textContent || ""));
+                const scopeRoot = el.closest("[role='main']") || el.parentElement || document.body;
+                const emptyText = Array.from(scopeRoot.querySelectorAll("div, span, p"))
+                  .filter(isVisible)
+                  .map((node) => normalizeRaw(node.innerText || node.textContent || ""))
+                  .find((text) => {
+                    const lower = text.toLowerCase();
+                    return (
+                      lower.includes("no results found") ||
+                      text.includes("결과를 찾을 수 없습니다") ||
+                      text.includes("결과가 없습니다")
+                    );
+                  }) || "";
+                return {
+                  header_cells: headerCells,
+                  rows,
+                  scroll_top: Number(el.scrollTop || 0),
+                  scroll_height: Number(el.scrollHeight || 0),
+                  client_height: Number(el.clientHeight || 0),
+                  progress_visible: Array.from(document.querySelectorAll("[role='progressbar']")).filter(isVisible).length,
+                  empty_state_visible: Boolean(emptyText),
+                  empty_state_text: emptyText,
+                };
+            }"""
+        )
+    except Exception:  # noqa: BLE001
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "header_cells": list(payload.get("header_cells") or []),
+        "rows": list(payload.get("rows") or []),
+        "scroll_top": int(payload.get("scroll_top") or 0),
+        "scroll_height": int(payload.get("scroll_height") or 0),
+        "client_height": int(payload.get("client_height") or 0),
+        "progress_visible": int(payload.get("progress_visible") or 0),
+        "empty_state_visible": bool(payload.get("empty_state_visible")),
+        "empty_state_text": _safe_text(payload.get("empty_state_text")),
+    }
+
+
+def _history_table_has_expected_header(snapshot: dict[str, Any]) -> bool:
+    header_cells = snapshot.get("header_cells")
+    if not isinstance(header_cells, list) or len(header_cells) < 5:
+        return False
+    normalized = tuple(_normalize_history_cell(item).lower() for item in header_cells[:5])
+    return normalized == HISTORY_HEADER_EN or normalized[0] in {"activity", KR_ACTIVITY.lower()}
+
+
+def _history_table_is_empty_state(snapshot: dict[str, Any]) -> bool:
+    return (
+        bool(snapshot.get("empty_state_visible"))
+        and int(snapshot.get("progress_visible") or 0) == 0
+        and not list(snapshot.get("rows") or [])
+    )
+
+
+def _merge_history_snapshot_rows(
+    seen: OrderedDict[str, list[str]],
+    raw_rows: list[Any],
+) -> int:
+    before_count = len(seen)
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, list) or len(raw_row) < 5:
             continue
-        values: list[str] = []
-        for col_idx in range(5):
-            text = cell_locator.nth(col_idx).inner_text(timeout=2000)
-            values.append(_normalize_cell(text))
-        rows.append(values)
-    return rows
+        normalized = _normalize_history_row(raw_row[:5])
+        if not any(normalized) or _is_history_header_row(normalized):
+            continue
+        key = "\x1f".join(normalized)
+        if key not in seen:
+            seen[key] = normalized
+    return len(seen) - before_count
 
 
-def _extract_rows_dom(
+def _wait_for_history_table_initial_snapshot(
+    page: Any,
+    table: Any,
+    *,
+    options: RunnerOptions,
+) -> dict[str, Any]:
+    deadline = time.time() + max(2.0, float(options.table_load_timeout_sec))
+    last_snapshot = _history_table_snapshot(page, table)
+    while time.time() < deadline:
+        snapshot = _history_table_snapshot(page, table)
+        if _history_table_is_empty_state(snapshot):
+            return snapshot
+        if _history_table_has_expected_header(snapshot) and (
+            list(snapshot.get("rows") or []) or int(snapshot["progress_visible"]) == 0
+        ):
+            return snapshot
+        last_snapshot = snapshot
+        page.wait_for_timeout(100 if int(snapshot["progress_visible"]) > 0 else 70)
+    return last_snapshot
+
+
+def _wait_for_history_table_round_settle(page: Any, table: Any, *, options: RunnerOptions) -> dict[str, Any]:
+    started_at = time.time()
+    deadline = started_at + max(0.35, options.lazy_scroll_pause_sec * 0.85)
+    max_deadline = started_at + max(1.2, options.lazy_scroll_pause_sec * 3.2)
+    pause_ms = max(60, int(options.lazy_scroll_pause_sec * 140))
+    last_snapshot: dict[str, Any] | None = None
+    stable_polls = 0
+
+    while time.time() < deadline:
+        snapshot = _history_table_snapshot(page, table)
+        if _history_table_is_empty_state(snapshot):
+            return snapshot
+        if last_snapshot is not None:
+            is_stable = (
+                snapshot["scroll_top"] == last_snapshot["scroll_top"]
+                and snapshot["scroll_height"] == last_snapshot["scroll_height"]
+                and snapshot["progress_visible"] == 0
+            )
+            if is_stable:
+                stable_polls += 1
+                if stable_polls >= 2:
+                    return snapshot
+            else:
+                stable_polls = 0
+                if snapshot["progress_visible"] > 0:
+                    deadline = min(
+                        max_deadline,
+                        max(deadline, time.time() + max(0.25, options.lazy_scroll_pause_sec * 0.9)),
+                    )
+        last_snapshot = snapshot
+        round_pause_ms = pause_ms if snapshot["progress_visible"] > 0 else max(50, pause_ms // 2)
+        page.wait_for_timeout(round_pause_ms)
+
+    return last_snapshot or _history_table_snapshot(page, table)
+
+
+def _scroll_history_table_once(table: Any) -> dict[str, int]:
+    try:
+        payload = table.evaluate(
+            """(el) => {
+                const currentTop = Number(el.scrollTop || 0);
+                const currentHeight = Number(el.scrollHeight || 0);
+                const clientHeight = Number(el.clientHeight || 0);
+                const step = Math.max(Math.floor(clientHeight * 0.92), 420);
+                const nextTop = Math.min(currentTop + step, Math.max(0, currentHeight - clientHeight));
+                el.scrollTop = nextTop;
+                el.dispatchEvent(new Event("scroll", { bubbles: true }));
+                return {
+                  scroll_top: Number(el.scrollTop || 0),
+                  scroll_height: Number(el.scrollHeight || 0),
+                  client_height: Number(el.clientHeight || 0),
+                };
+            }"""
+        )
+    except Exception:  # noqa: BLE001
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "scroll_top": int(payload.get("scroll_top") or 0),
+        "scroll_height": int(payload.get("scroll_height") or 0),
+        "client_height": int(payload.get("client_height") or 0),
+    }
+
+
+def _preload_history_table_rows(
     *,
     page: Any,
     options: RunnerOptions,
@@ -1827,44 +2302,85 @@ def _extract_rows_dom(
     table.wait_for(state="visible", timeout=max(1, options.table_load_timeout_sec) * 1000)
 
     seen: OrderedDict[str, list[str]] = OrderedDict()
+    initial_snapshot = _wait_for_history_table_initial_snapshot(page, table, options=options)
+    if _history_table_is_empty_state(initial_snapshot):
+        logger.info(
+            "history_table_empty_state rows=0 text=%s progress_visible=%s",
+            initial_snapshot["empty_state_text"] or "<none>",
+            initial_snapshot["progress_visible"],
+        )
+        return []
+    _merge_history_snapshot_rows(seen, list(initial_snapshot.get("rows") or []))
+
+    started_at = time.time()
     stable_rounds = 0
+    previous_snapshot: dict[str, Any] = initial_snapshot
 
     for round_idx in range(1, options.lazy_scroll_max_rounds + 1):
-        before = len(seen)
-        for row in _extract_visible_rows(table):
-            key = "\x1f".join(row)
-            if key not in seen:
-                seen[key] = row
-
-        try:
-            table.evaluate(
-                "(el) => { el.scrollTop = el.scrollHeight; return [el.scrollTop, el.scrollHeight, el.clientHeight]; }"
+        if time.time() - started_at >= DEFAULT_ACCOUNT_COLLECT_TIMEOUT_SEC:
+            logger.warning(
+                "history_table_collect_timeout rounds=%s rows=%s elapsed_sec=%s",
+                round_idx - 1,
+                len(seen),
+                DEFAULT_ACCOUNT_COLLECT_TIMEOUT_SEC,
             )
-        except Exception:  # noqa: BLE001
-            pass
+            break
 
-        page.wait_for_timeout(max(100, int(options.lazy_scroll_pause_sec * 1000)))
-        after = len(seen)
-        if after == before:
-            stable_rounds += 1
-        else:
-            stable_rounds = 0
+        _scroll_history_table_once(table)
+        settled_snapshot = _wait_for_history_table_round_settle(page, table, options=options)
+        if _history_table_is_empty_state(settled_snapshot):
+            logger.info(
+                "history_table_empty_state rows=0 text=%s progress_visible=%s",
+                settled_snapshot["empty_state_text"] or "<none>",
+                settled_snapshot["progress_visible"],
+            )
+            return []
+
+        new_rows = _merge_history_snapshot_rows(seen, list(settled_snapshot.get("rows") or []))
+        row_count_stable = new_rows == 0
+        if previous_snapshot is not None:
+            scroll_stable = (
+                settled_snapshot["scroll_top"] == previous_snapshot["scroll_top"]
+                and settled_snapshot["scroll_height"] == previous_snapshot["scroll_height"]
+            )
+            loading_clear = settled_snapshot["progress_visible"] == 0
+            if row_count_stable and scroll_stable and loading_clear:
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+        previous_snapshot = settled_snapshot
 
         if stable_rounds >= options.lazy_scroll_no_new_rounds:
             logger.info(
-                "lazy_scroll_done rounds=%s rows=%s stable_rounds=%s",
+                "history_table_preload_done rounds=%s rows=%s stable_rounds=%s progress_visible=%s scroll_top=%s scroll_height=%s",
                 round_idx,
                 len(seen),
                 stable_rounds,
+                settled_snapshot["progress_visible"],
+                settled_snapshot["scroll_top"],
+                settled_snapshot["scroll_height"],
             )
             break
 
     return list(seen.values())
 
 
+def _extract_rows_js_accumulated(
+    *,
+    page: Any,
+    options: RunnerOptions,
+    logger: logging.Logger,
+) -> list[list[str]]:
+    rows = _preload_history_table_rows(page=page, options=options, logger=logger)
+    logger.info("history_js_rows=%s", len(rows))
+    return rows
+
+
 def _parse_clipboard_tsv(raw_text: str) -> list[list[str]]:
     rows: list[list[str]] = []
+    anchored_rows: list[list[str]] = []
     seen: set[tuple[str, ...]] = set()
+    header_seen = False
     for line in raw_text.splitlines():
         line = line.strip()
         if not line:
@@ -1873,18 +2389,35 @@ def _parse_clipboard_tsv(raw_text: str) -> list[list[str]]:
         if len(parts) < 5:
             continue
         row = parts[:5]
-        head = row[0].lower()
-        if head in {"activity"} or row[0] in {KR_ACTIVITY}:
+        if _is_history_header_row(row):
+            header_seen = True
+            anchored_rows = []
             continue
         key = tuple(row)
         if key in seen:
             continue
         seen.add(key)
         rows.append(row)
-    return rows
+        if header_seen:
+            anchored_rows.append(row)
+    return anchored_rows or rows
 
 
-def _extract_rows_clipboard_fallback(page: Any, *, logger: logging.Logger) -> list[list[str]]:
+def _history_clipboard_focus_target(table: Any) -> Any:
+    first_cell = table.locator("tbody tr[role='row'] td[role='gridcell']").first
+    try:
+        first_cell.wait_for(state="visible", timeout=2000)
+        return first_cell
+    except Exception:  # noqa: BLE001
+        return table
+
+
+def _extract_rows_clipboard_fallback(
+    page: Any,
+    *,
+    options: RunnerOptions,
+    logger: logging.Logger,
+) -> list[list[str]]:
     try:
         import pyperclip  # type: ignore
     except Exception as exc:  # noqa: BLE001
@@ -1893,11 +2426,23 @@ def _extract_rows_clipboard_fallback(page: Any, *, logger: logging.Logger) -> li
 
     table = _table_locator(page)
     try:
-        table.click(timeout=3000)
+        focus_target = _history_clipboard_focus_target(table)
+        pyperclip.copy("")
+        focus_target.click(timeout=3000, force=True)
+        try:
+            table.evaluate(
+                """(el) => {
+                    if (typeof el.focus === "function") {
+                        el.focus();
+                    }
+                }"""
+            )
+        except Exception:  # noqa: BLE001
+            pass
         page.keyboard.press("Control+a")
         page.wait_for_timeout(200)
         page.keyboard.press("Control+c")
-        page.wait_for_timeout(350)
+        page.wait_for_timeout(220)
     except Exception as exc:  # noqa: BLE001
         logger.warning("clipboard_fallback_copy_failed error=%s", exc)
         return []
@@ -1999,8 +2544,8 @@ def _collect_for_account(
         options=options,
         activity_prefix=activity_prefix,
         account=account,
-        step_name="set_last_7_days",
-        fn=lambda: _ensure_last_7_days(page),
+        step_name="set_last_14_days",
+        fn=lambda: _ensure_last_14_days(page),
     )
     _run_step(
         logger=logger,
@@ -2018,27 +2563,10 @@ def _collect_for_account(
         options=options,
         activity_prefix=activity_prefix,
         account=account,
-        step_name="extract_rows_dom",
-        fn=lambda: _extract_rows_dom(page=page, options=options, logger=logger),
+        step_name="extract_rows_js_accumulated",
+        fn=lambda: _extract_rows_js_accumulated(page=page, options=options, logger=logger),
     )
-    if rows:
-        return rows
-
-    logger.warning(
-        "dom_extract_empty activity=%s account=%s/%s trying_clipboard_fallback=true",
-        activity_prefix,
-        account.act,
-        account.business_id,
-    )
-    return _run_step(
-        logger=logger,
-        page=page,
-        options=options,
-        activity_prefix=activity_prefix,
-        account=account,
-        step_name="extract_rows_clipboard_fallback",
-        fn=lambda: _extract_rows_clipboard_fallback(page, logger=logger),
-    )
+    return rows
 
 
 def _dedupe_rows(rows: list[list[str]]) -> list[list[str]]:
@@ -2046,7 +2574,7 @@ def _dedupe_rows(rows: list[list[str]]) -> list[list[str]]:
     for row in rows:
         if len(row) < 5:
             continue
-        normalized = [_normalize_cell(item) for item in row[:5]]
+        normalized = _normalize_history_row(row[:5])
         key = "\x1f".join(normalized)
         if key not in deduped:
             deduped[key] = normalized
@@ -2059,13 +2587,29 @@ def _save_activity_xlsx(
     output_path: Path,
 ) -> None:
     try:
-        import pandas as pd  # type: ignore
+        from openpyxl import Workbook  # type: ignore
+        from openpyxl.styles import Alignment  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError("pandas/openpyxl are required to write xlsx output.") from exc
+        raise RuntimeError("openpyxl is required to write xlsx output.") from exc
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    frame = pd.DataFrame(rows, columns=HISTORY_COLUMNS)
-    frame.to_excel(output_path, index=False)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Activity History"
+    worksheet.append(HISTORY_COLUMNS)
+
+    for raw_row in rows:
+        normalized = _normalize_history_row(raw_row[:5])
+        worksheet.append(normalized)
+
+    for row in worksheet.iter_rows(min_row=2, max_col=len(HISTORY_COLUMNS)):
+        for index, cell in enumerate(row, start=1):
+            cell.number_format = "@"
+            cell.value = "" if cell.value is None else str(cell.value)
+            if index == 3:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    workbook.save(output_path)
 
 
 def _build_output_file_path(*, options: RunnerOptions, activity_prefix: str) -> Path:
@@ -2212,6 +2756,17 @@ def main() -> int:
         logger.info("dry_run=true completed without browser launch.")
         return 0
 
+    prepared_user_data_dir = prepare_meta_user_data_dir(requested_dir=options.user_data_dir)
+    options = replace(options, user_data_dir=prepared_user_data_dir.effective_dir)
+    logger.info(
+        "prepared_user_data_dir requested=%s effective=%s migration_mode=%s",
+        prepared_user_data_dir.requested_dir,
+        prepared_user_data_dir.effective_dir,
+        prepared_user_data_dir.migration_mode,
+    )
+    if prepared_user_data_dir.warning:
+        logger.warning("prepared_user_data_dir_warning %s", prepared_user_data_dir.warning)
+
     try:
         from playwright.sync_api import sync_playwright  # type: ignore
     except Exception as exc:  # noqa: BLE001
@@ -2219,8 +2774,7 @@ def main() -> int:
         raise RuntimeError("playwright is required. Run: pip install -r requirements.txt") from exc
 
     activity_results: dict[str, dict[str, Any]] = {}
-    abort_run = False
-    abort_reason = ""
+    run_had_failures = False
     with sync_playwright() as playwright:
         active_options = options
         context = _launch_context(playwright, active_options)
@@ -2237,12 +2791,18 @@ def main() -> int:
                 )
                 collected_rows: list[list[str]] = []
                 failed_accounts: list[str] = []
+                failure_messages: list[str] = []
 
                 if not accounts:
-                    logger.warning(
-                        "activity_no_accounts prefix=%s output will be empty",
-                        activity_prefix,
-                    )
+                    logger.warning("activity_no_accounts prefix=%s message=%s", activity_prefix, NO_TARGET_ACCOUNTS_MESSAGE)
+                    activity_results[activity_prefix] = {
+                        "status": "Skipped",
+                        "rows": 0,
+                        "path": "",
+                        "failed_accounts": [],
+                        "message": NO_TARGET_ACCOUNTS_MESSAGE,
+                    }
+                    continue
 
                 manual_retry_done: set[str] = set()
                 account_index = 0
@@ -2284,8 +2844,12 @@ def main() -> int:
                             active_options = replace(active_options, headless=False)
                             context = _launch_context(playwright, active_options)
                             page = context.pages[0] if context.pages else context.new_page()
-                            page.goto("https://business.facebook.com/", wait_until="domcontentloaded")
-                            _wait_for_login_context(page, timeout_sec=active_options.login_timeout_sec)
+                            _goto_campaigns_with_bootstrap_filter(
+                                page,
+                                account,
+                                activity_prefix=activity_prefix,
+                                options=active_options,
+                            )
                             logger.info(
                                 "manual_filter_headful_restart_done activity=%s account=%s/%s",
                                 activity_prefix,
@@ -2309,12 +2873,12 @@ def main() -> int:
                             shot or "<none>",
                             exc,
                         )
-                        abort_run = True
-                        abort_reason = (
-                            f"first_failed_account={account.act}/{account.business_id} "
-                            f"activity={activity_prefix} error={exc}"
+                        failure_messages.append(
+                            f"{account.act}/{account.business_id}: {_format_exception_message(exc)}"
                         )
-                        break
+                        run_had_failures = True
+                        account_index += 1
+                        continue
                     except Exception as exc:  # noqa: BLE001
                         failed_accounts.append(f"{account.act}/{account.business_id}")
                         shot = _capture_screenshot(
@@ -2332,53 +2896,99 @@ def main() -> int:
                             shot or "<none>",
                             exc,
                         )
-                        abort_run = True
-                        abort_reason = (
-                            f"first_failed_account={account.act}/{account.business_id} "
-                            f"activity={activity_prefix} error={exc}"
+                        failure_messages.append(
+                            f"{account.act}/{account.business_id}: {_format_exception_message(exc)}"
                         )
-                        break
+                        run_had_failures = True
+                        account_index += 1
+                        continue
 
                 deduped = _dedupe_rows(collected_rows)
+                if not deduped:
+                    if failed_accounts:
+                        message = f"\uc561\uc158 \ub85c\uadf8 \ub2e4\uc6b4\ub85c\ub4dc \uc2e4\ud328: {failure_messages[0]}"
+                        logger.error(
+                            "activity_failed_without_rows prefix=%s failed_accounts=%s message=%s",
+                            activity_prefix,
+                            failed_accounts,
+                            message,
+                        )
+                        activity_results[activity_prefix] = {
+                            "status": "Failed",
+                            "rows": 0,
+                            "path": "",
+                            "failed_accounts": failed_accounts,
+                            "message": message,
+                        }
+                    else:
+                        logger.warning(
+                            "activity_no_rows prefix=%s message=%s",
+                            activity_prefix,
+                            NO_ACTION_LOG_ROWS_MESSAGE,
+                        )
+                        activity_results[activity_prefix] = {
+                            "status": "Skipped",
+                            "rows": 0,
+                            "path": "",
+                            "failed_accounts": [],
+                            "message": NO_ACTION_LOG_ROWS_MESSAGE,
+                        }
+                    continue
+
                 output_path = _build_output_file_path(
                     options=active_options,
                     activity_prefix=activity_prefix,
                 )
                 _save_activity_xlsx(rows=deduped, output_path=output_path)
-                logger.info(
-                    "activity_output_saved prefix=%s rows=%s path=%s failed_accounts=%s",
-                    activity_prefix,
-                    len(deduped),
-                    output_path,
-                    failed_accounts,
-                )
+
+                if failed_accounts:
+                    message = (
+                        f"\ubd80\ubd84 \uc800\uc7a5\uc644\ub8cc:{output_path.name} / "
+                        f"\uccab \uc2e4\ud328:{failure_messages[0]}"
+                    )
+                    logger.warning(
+                        "activity_output_saved_with_failures prefix=%s rows=%s path=%s failed_accounts=%s",
+                        activity_prefix,
+                        len(deduped),
+                        output_path,
+                        failed_accounts,
+                    )
+                    status = "Failed"
+                else:
+                    message = f"\uc561\uc158\ub85c\uadf8 \uc800\uc7a5\uc644\ub8cc:{output_path.name}"
+                    logger.info(
+                        "activity_output_saved prefix=%s rows=%s path=%s failed_accounts=%s",
+                        activity_prefix,
+                        len(deduped),
+                        output_path,
+                        failed_accounts,
+                    )
+                    status = "Completed"
 
                 activity_results[activity_prefix] = {
+                    "status": status,
                     "rows": len(deduped),
                     "path": str(output_path),
                     "failed_accounts": failed_accounts,
+                    "message": message,
                 }
-                if abort_run:
-                    logger.error(
-                        "run_abort_on_first_failed_account reason=%s",
-                        abort_reason,
-                    )
-                    break
         finally:
             context.close()
 
     logger.info("run_complete activities=%s", len(activity_results))
     for prefix, result in activity_results.items():
         logger.info(
-            "summary activity=%s rows=%s failed_accounts=%s file=%s",
+            "summary activity=%s status=%s rows=%s failed_accounts=%s file=%s message=%s",
             prefix,
+            result.get("status", ""),
             result["rows"],
             result["failed_accounts"],
             result["path"],
+            result.get("message", ""),
         )
     if not args.dry_run:
         _open_output_in_explorer(path=options.output_dir, logger=logger)
-    return 1 if abort_run else 0
+    return 1 if run_had_failures else 0
 
 
 if __name__ == "__main__":

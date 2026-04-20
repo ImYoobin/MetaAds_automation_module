@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$workspaceRoot = (Resolve-Path (Join-Path $repoRoot "..\..")).Path
 Set-Location $repoRoot
 
 $workspace = Join-Path $BuildRoot "meta_auto_export_build"
@@ -17,12 +18,15 @@ $venvDir = Join-Path $workspace ".venv_pack"
 $pipCache = Join-Path $workspace ".pip_cache"
 $tmpDir = Join-Path $workspace ".tmp"
 
-$repoDistFinal = Join-Path $repoRoot "dist\MyApp"
-$repoDistDebug = Join-Path $repoRoot "dist\MyAppDebug"
+$finalAppName = "Meta_Export"
+$debugAppName = "Meta_Export_Debug"
+$repoDistFinal = Join-Path $repoRoot "dist\$finalAppName"
+$repoDistDebug = Join-Path $repoRoot "dist\$debugAppName"
 $repoReleaseDir = Join-Path $repoRoot "release"
-$repoReleaseZip = Join-Path $repoReleaseDir "MyApp_win.zip"
-$repoReleaseZipDebug = Join-Path $repoReleaseDir "MyAppDebug_win.zip"
+$repoReleaseZip = Join-Path $repoReleaseDir "${finalAppName}_win.zip"
+$repoReleaseZipDebug = Join-Path $repoReleaseDir "${debugAppName}_win.zip"
 $repoBuildLog = Join-Path $repoReleaseDir "build_release.log"
+$releaseMirrorRoot = Join-Path $workspaceRoot "release_source\meta_automation"
 $runtimeRequirements = (Resolve-Path (Join-Path $PSScriptRoot "requirements.meta.runtime.txt")).Path
 
 function Write-Step {
@@ -237,6 +241,7 @@ function Stage-FinalPayload {
     Write-Step "Copying app modules"
     Copy-DirectoryMirror -From (Join-Path $stageRoot "dashboard") -To (Join-Path $FinalRoot "dashboard") -ExcludeDirs @("__pycache__") -ExcludeFiles @("*.pyc")
     Copy-DirectoryMirror -From (Join-Path $stageRoot "meta_core") -To (Join-Path $FinalRoot "meta_core") -ExcludeDirs @("__pycache__") -ExcludeFiles @("*.pyc")
+    Copy-DirectoryMirror -From (Join-Path $stageRoot "meta_history_log") -To (Join-Path $FinalRoot "meta_history_log") -ExcludeDirs @("__pycache__") -ExcludeFiles @("*.pyc")
 
     Ensure-Dir -Path (Join-Path $FinalRoot "app")
     Ensure-Dir -Path (Join-Path $FinalRoot ".streamlit")
@@ -245,8 +250,7 @@ function Stage-FinalPayload {
 
     Copy-Item -LiteralPath (Join-Path $stageRoot "app\main.py") -Destination (Join-Path $FinalRoot "app\main.py") -Force
     Copy-Item -LiteralPath (Join-Path $stageRoot ".streamlit\config.toml") -Destination (Join-Path $FinalRoot ".streamlit\config.toml") -Force
-    Copy-Item -LiteralPath (Join-Path $stageRoot "config\meta\activity_catalog.json") -Destination (Join-Path $FinalRoot "config\meta\activity_catalog.json") -Force
-    Copy-Item -LiteralPath (Join-Path $stageRoot "config\meta\activity_catalog.example.json") -Destination (Join-Path $FinalRoot "config\meta\activity_catalog.example.json") -Force
+    Copy-DirectoryMirror -From (Join-Path $stageRoot "config\meta") -To (Join-Path $FinalRoot "config\meta") -ExcludeDirs @("__pycache__") -ExcludeFiles @("*.pyc")
     Copy-Item -LiteralPath (Join-Path $stageRoot "RUN.md") -Destination (Join-Path $FinalRoot "RUN.md") -Force
 }
 
@@ -255,10 +259,13 @@ function Assert-RequiredSource {
         "launcher.py",
         "app\main.py",
         ".streamlit\config.toml",
+        "config\meta",
         "config\meta\activity_catalog.json",
         "config\meta\activity_catalog.example.json",
+        "config\meta\runtime_settings.json",
         "dashboard",
         "meta_core",
+        "meta_history_log",
         "RUN.md"
     )
     foreach ($item in $required) {
@@ -282,19 +289,20 @@ function Prepare-StageSource {
 
     Copy-Item -LiteralPath (Join-Path $repoRoot "app\main.py") -Destination (Join-Path $stageRoot "app\main.py") -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot ".streamlit\config.toml") -Destination (Join-Path $stageRoot ".streamlit\config.toml") -Force
-    Copy-Item -LiteralPath (Join-Path $repoRoot "config\meta\activity_catalog.json") -Destination (Join-Path $stageRoot "config\meta\activity_catalog.json") -Force
-    Copy-Item -LiteralPath (Join-Path $repoRoot "config\meta\activity_catalog.example.json") -Destination (Join-Path $stageRoot "config\meta\activity_catalog.example.json") -Force
     Copy-Item -LiteralPath $runtimeRequirements -Destination (Join-Path $stageRoot "requirements.meta.runtime.txt") -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot "RUN.md") -Destination (Join-Path $stageRoot "RUN.md") -Force
 
+    Copy-DirectoryMirror -From (Join-Path $repoRoot "config\meta") -To (Join-Path $stageRoot "config\meta") -ExcludeDirs @("__pycache__") -ExcludeFiles @("*.pyc")
     Copy-DirectoryMirror -From (Join-Path $repoRoot "dashboard") -To (Join-Path $stageRoot "dashboard") -ExcludeDirs @("__pycache__") -ExcludeFiles @("*.pyc")
     Copy-DirectoryMirror -From (Join-Path $repoRoot "meta_core") -To (Join-Path $stageRoot "meta_core") -ExcludeDirs @("legacy", "__pycache__") -ExcludeFiles @("*.pyc", "__main__.py")
+    Copy-DirectoryMirror -From (Join-Path $repoRoot "meta_history_log") -To (Join-Path $stageRoot "meta_history_log") -ExcludeDirs @("__pycache__") -ExcludeFiles @("*.pyc")
 }
 
 Ensure-Dir -Path $repoReleaseDir
 Set-Content -LiteralPath $repoBuildLog -Value ""
 Write-Step "Build start"
 Write-Step "Repo root: $repoRoot"
+Write-Step "Workspace root: $workspaceRoot"
 Write-Step "Build root: $BuildRoot"
 
 $repoRootAbs = [System.IO.Path]::GetFullPath($repoRoot)
@@ -340,17 +348,17 @@ Remove-Item -LiteralPath $repoDistFinal -Recurse -Force -ErrorAction SilentlyCon
 Remove-Item -LiteralPath $repoDistDebug -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $repoReleaseZip -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $repoReleaseZipDebug -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath (Join-Path $workspace "MyApp.spec") -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath (Join-Path $workspace "MyAppDebug.spec") -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath (Join-Path $workspace "MyAppDebug.exe.tmp") -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath (Join-Path $pyiDistRoot "MyApp") -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath (Join-Path $pyiDistRoot "MyAppDebug") -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $workspace "$finalAppName.spec") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $workspace "$debugAppName.spec") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $workspace "$debugAppName.exe.tmp") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $pyiDistRoot $finalAppName) -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $pyiDistRoot $debugAppName) -Recurse -Force -ErrorAction SilentlyContinue
 
-Invoke-LauncherBuild -PyInstallerPath $venvPyInstaller -LauncherPath (Join-Path $stageRoot "launcher.py") -Name "MyApp" -Console:$false
-Invoke-LauncherBuild -PyInstallerPath $venvPyInstaller -LauncherPath (Join-Path $stageRoot "launcher.py") -Name "MyAppDebug" -Console:$true
+Invoke-LauncherBuild -PyInstallerPath $venvPyInstaller -LauncherPath (Join-Path $stageRoot "launcher.py") -Name $finalAppName -Console:$false
+Invoke-LauncherBuild -PyInstallerPath $venvPyInstaller -LauncherPath (Join-Path $stageRoot "launcher.py") -Name $debugAppName -Console:$true
 
-$finalBuiltRoot = Join-Path $pyiDistRoot "MyApp"
-$debugBuiltRoot = Join-Path $pyiDistRoot "MyAppDebug"
+$finalBuiltRoot = Join-Path $pyiDistRoot $finalAppName
+$debugBuiltRoot = Join-Path $pyiDistRoot $debugAppName
 if (!(Test-Path -LiteralPath $finalBuiltRoot)) {
     throw "Final launcher output missing: $finalBuiltRoot"
 }
@@ -358,28 +366,26 @@ if (!(Test-Path -LiteralPath $debugBuiltRoot)) {
     throw "Debug launcher output missing: $debugBuiltRoot"
 }
 
-$debugExeTmp = Join-Path $workspace "MyAppDebug.exe.tmp"
-Copy-Item -LiteralPath (Join-Path $debugBuiltRoot "MyAppDebug.exe") -Destination $debugExeTmp -Force
+$debugExeTmp = Join-Path $workspace "$debugAppName.exe.tmp"
+Copy-Item -LiteralPath (Join-Path $debugBuiltRoot "$debugAppName.exe") -Destination $debugExeTmp -Force
 
 Stage-FinalPayload -FinalRoot $finalBuiltRoot -VenvPython $venvPython -VenvSitePackages $venvSitePackages
 
 Copy-DirectoryMirror -From $finalBuiltRoot -To $debugBuiltRoot
-if (Test-Path -LiteralPath (Join-Path $debugBuiltRoot "MyApp.exe")) {
-    Remove-Item -LiteralPath (Join-Path $debugBuiltRoot "MyApp.exe") -Force
+if (Test-Path -LiteralPath (Join-Path $debugBuiltRoot "$finalAppName.exe")) {
+    Remove-Item -LiteralPath (Join-Path $debugBuiltRoot "$finalAppName.exe") -Force
 }
-Move-Item -LiteralPath $debugExeTmp -Destination (Join-Path $debugBuiltRoot "MyAppDebug.exe") -Force
+Move-Item -LiteralPath $debugExeTmp -Destination (Join-Path $debugBuiltRoot "$debugAppName.exe") -Force
 
 Write-Step "Copying final artifacts to repo dist"
 Copy-DirectoryMirror -From $finalBuiltRoot -To $repoDistFinal
 Copy-DirectoryMirror -From $debugBuiltRoot -To $repoDistDebug
 
-Write-Step "Creating release zips"
-Compress-Archive -Path $repoDistFinal -DestinationPath $repoReleaseZip -Force
-Compress-Archive -Path $repoDistDebug -DestinationPath $repoReleaseZipDebug -Force
+Write-Step "Mirroring final runtime to release source"
+Copy-DirectoryMirror -From $finalBuiltRoot -To $releaseMirrorRoot
 
 Write-Step "Build complete"
-Write-Host "  Final EXE: $repoDistFinal\MyApp.exe"
-Write-Host "  Debug EXE: $repoDistDebug\MyAppDebug.exe"
-Write-Host "  Final ZIP: $repoReleaseZip"
-Write-Host "  Debug ZIP: $repoReleaseZipDebug"
+Write-Host "  Final EXE: $repoDistFinal\$finalAppName.exe"
+Write-Host "  Debug EXE: $repoDistDebug\$debugAppName.exe"
+Write-Host "  Release mirror: $releaseMirrorRoot"
 Write-Host "  Build log: $repoBuildLog"

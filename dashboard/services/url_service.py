@@ -41,7 +41,7 @@ def parse_report_url(raw_url: str, *, default_event_source: str = "") -> ParsedR
         raise UrlValidationError("URL은 http 또는 https로 시작해야 합니다.")
 
     if not _is_allowed_domain(parsed.netloc):
-        raise UrlValidationError("Meta 도메인(facebook.com/fb.com/adsmanager.com) URL만 허용됩니다.")
+        raise UrlValidationError("Meta 도메인(facebook.com, fb.com, adsmanager.com) URL만 허용됩니다.")
 
     query = parse_qs(parsed.query or "")
     act_id = _first(query, ("act", "account_id", "ad_account_id"))
@@ -102,7 +102,7 @@ def build_cleaned_url_from_parts(
     global_scope_value = str(global_scope_id or "").strip() or business_value
     report_value = str(report_id or "").strip()
     if not act_value or not business_value or not report_value:
-        raise UrlValidationError("cleaned URL 생성을 위한 필수 값이 누락되었습니다.")
+        raise UrlValidationError("cleaned URL 생성에 필요한 필수 값이 누락되었습니다.")
     return _build_report_view_url(
         act_id=act_value,
         business_id=business_value,

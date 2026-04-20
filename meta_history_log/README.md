@@ -66,7 +66,7 @@ python .\main.py --verbose --force-ui-filter-fallback
 Defaults:
 - browser: `msedge`
 - headless: `false`
-- profile: `%USERPROFILE%\MetaAdsExport\user_data\meta_history_log`
+- profile: `%USERPROFILE%\MetaAdsExport\user_data\meta\<browser>`
 
 ## Logging and Failure Artifacts
 - Logs:
@@ -83,7 +83,7 @@ Defaults:
 ## Isolation from report export
 - Independent runtime/entrypoint (no coupling to report export flow)
 - Shared only via config files under `config/meta`
-- Separate browser profile default to reduce session collision risk
+- Shared browser profile default to reuse login across report/action-log phases
 - No use of URL hacks for `selected_adset_ids`/history scope control
 
 ## Failure Policy

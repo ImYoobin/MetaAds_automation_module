@@ -1,7 +1,7 @@
 # Meta Automation Run Guide (Module SSOT)
 
 `module_source/meta_automation_module` is the source of truth.
-`release_source/meta_automation` is a mirrored runtime target.
+`release_source/meta_automation` is the mirrored runtime target.
 
 ## 1) Local install (dev run, from module root)
 ```powershell
@@ -11,12 +11,20 @@ python -m pip install --upgrade pip
 pip install -r .\build\meta\requirements.meta.runtime.txt
 ```
 
-## 2) Local launch (actual entrypoint)
+## 2) Local launch (single UI entrypoint)
 ```powershell
 python -m streamlit run .\app\main.py
 ```
 
 If browser does not open automatically, open `http://localhost:8502`.
+
+The integrated UI supports two execution options:
+- `캠페인 데이터 다운로드`
+- `액션 로그 다운로드`
+
+When both are enabled, the app always runs:
+1. report download for all selected activities
+2. action-log download for all selected activities
 
 ## 3) Sync module -> release (from workspace root)
 ```powershell
@@ -36,12 +44,12 @@ Managed mirror scope:
 - `config/meta/`
 - `dashboard/`
 - `meta_core/`
+- `meta_history_log/`
 - `RUN.md`
 
 Excluded from sync:
 - `_internal/`
 - `logs/`
-- `MyApp.exe`
 - build artifacts
 
 ## 4) Official EXE build (from module root)
@@ -56,14 +64,18 @@ Build outside OneDrive/repo path.
 ```
 
 Outputs:
-- `dist\MyApp\MyApp.exe` (final, noconsole)
-- `dist\MyAppDebug\MyAppDebug.exe` (debug, console)
-- `release\MyApp_win.zip`
-- `release\MyAppDebug_win.zip`
+- `dist\Meta_Export\Meta_Export.exe` (final, noconsole)
+- `dist\Meta_Export_Debug\Meta_Export_Debug.exe` (debug, console)
+- `dist\Meta_Export\Meta_Export.exe`
+- `dist\Meta_Export_Debug\Meta_Export_Debug.exe`
+- `release_source\meta_automation\Meta_Export.exe`
+
+`Meta_History_Log.exe` is no longer produced or shipped.
+ZIP archives are no longer produced during the Meta release build.
 
 ## 5) Smoke test
 ```powershell
-.\dist\MyApp\MyApp.exe
+.\dist\Meta_Export\Meta_Export.exe
 ```
 
 Check logs:
@@ -75,36 +87,23 @@ Expected launcher flow:
 2. `streamlit_ready host=127.0.0.1 port=8502`
 3. `browser_opened url=http://localhost:8502`
 
+Expected UI smoke:
+1. 실행 옵션 영역에 `캠페인 데이터 다운로드` / `액션 로그 다운로드` 체크박스가 보인다.
+2. 둘 다 켜면 report 단계가 모두 끝난 뒤 history 단계가 시작된다.
+3. 하단 진행 영역에 report와 action-log 결과가 별도 섹션으로 표시된다.
+
 ## 6) Deprecated build-kit path
 - `module_source\_build_kit\meta\*.ps1` remains as compatibility wrappers.
 - Preferred path: `module_source\meta_automation_module\build\meta\*.ps1`.
 
-## 7) Meta History Log (separate runner)
-`meta_history_log` is independent from report export runtime.
-Shared items are only:
+## 7) Integrated action-log runtime notes
+`meta_history_log` is now bundled into the same runtime and imported by the Streamlit dashboard.
+
+Shared config paths:
 - `config/meta/activity_catalog.json`
 - `config/meta/runtime_settings.json`
 
-Install requirements (separate venv recommended):
-```powershell
-python -m venv .venv-history
-.\.venv-history\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r .\meta_history_log\requirements.txt
-```
-
-Run with Python:
-```powershell
-python .\meta_history_log\main.py --verbose
-```
-
-Config reference paths used by default in module run:
-- `module_source/meta_automation_module/config/meta/activity_catalog.json`
-- `module_source/meta_automation_module/config/meta/runtime_settings.json`
-
-Conflict guardrail with report export:
-- No shared `selected_adset_ids` / URL column hacks.
-- Dedicated browser profile default:
-  - `%USERPROFILE%\MetaAdsExport\user_data\meta_history_log`
-- Output folder:
-  - `{runtime_settings.output_dir}\history_logs\{yyyymmdd}`
+Default history runtime paths:
+- browser profile: `%USERPROFILE%\MetaAdsExport\user_data\meta\<browser>`
+- action-log output: `%USERPROFILE%\MetaAdsExport\output\action_log\{yyyymmdd}`
+- trace: `%USERPROFILE%\MetaAdsExport\trace\{yyyymmdd}`

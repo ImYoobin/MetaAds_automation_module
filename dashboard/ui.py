@@ -1,4 +1,4 @@
-﻿"""Streamlit rendering layer for Meta automation dashboard."""
+"""Streamlit rendering layer for Meta automation dashboard."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.models import (
-    INTERNAL_TO_WORKBOOK_SHEET_NAME,
     SHEET_DISPLAY_ORDER,
     ValidationResult,
     build_activity_id,
@@ -25,19 +24,25 @@ from dashboard.services.config_service import (
     delete_sheet_url,
     rename_activity,
     rename_brand,
-    update_sheet_url,
 )
 from dashboard.services.url_service import UrlValidationError, clean_report_url
 
 
-RESULT_SHEET_COLUMNS: tuple[str, ...] = (
-    INTERNAL_TO_WORKBOOK_SHEET_NAME["overall"],
-    INTERNAL_TO_WORKBOOK_SHEET_NAME["demo"],
-    INTERNAL_TO_WORKBOOK_SHEET_NAME["overall_bof"],
-    INTERNAL_TO_WORKBOOK_SHEET_NAME["demo_bof"],
-    INTERNAL_TO_WORKBOOK_SHEET_NAME["time"],
-    INTERNAL_TO_WORKBOOK_SHEET_NAME["time_bof"],
-)
+STATUS_LABEL = {
+    "waiting": "Waiting",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+    "skipped": "Skipped",
+}
+
+STATUS_STYLE = {
+    "waiting": "background-color: #f1f5f9; color: #64748b; font-weight: 600;",
+    "running": "background-color: #dbeafe; color: #1d4ed8; font-weight: 700;",
+    "completed": "background-color: #dcfce7; color: #166534; font-weight: 700;",
+    "failed": "background-color: #fee2e2; color: #b91c1c; font-weight: 700;",
+    "skipped": "background-color: #f3f4f6; color: #6b7280; font-weight: 600;",
+}
 
 
 def _safe_text(value: Any) -> str:
@@ -161,32 +166,68 @@ def _inject_ui_css() -> None:
     st.markdown(
         """
         <style>
+        .meta-caption-muted { color: #6b7280; font-size: 0.92rem; margin-top: 0.12rem; }
         .meta-tree-caption { color: #6b7280; font-size: 0.84rem; }
-        .meta-sub-caption { color: #6b7280; font-size: 0.82rem; margin-top: 0.15rem; }
+        .meta-main-card-title { font-size: 1.05rem; font-weight: 700; color: #111827; margin-bottom: 0.2rem; }
+        .meta-section-title { font-size: 1rem; font-weight: 700; color: #111827; margin: 0.5rem 0 0.35rem 0; }
+        .meta-disabled-box {
+            border: 1px dashed #d1d5db;
+            border-radius: 0.8rem;
+            padding: 0.85rem 1rem;
+            background: #f8fafc;
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin: 0.35rem 0 0.8rem 0;
+        }
+        div[class*="st-key-edit_brand_"] button,
+        div[class*="st-key-edit_activity_"] button,
+        div[class*="st-key-delete_brand_icon_"] button,
+        div[class*="st-key-delete_activity_icon_"] button {
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            padding: 0.05rem 0.2rem !important;
+            min-height: 1.8rem !important;
+        }
         div[class*="st-key-edit_brand_"] button,
         div[class*="st-key-edit_activity_"] button {
-            border: none !important; background: transparent !important; box-shadow: none !important;
-            color: #4b5563 !important; padding: 0.05rem 0.3rem !important; min-height: 1.65rem !important;
+            color: #4b5563 !important;
+        }
+        div[class*="st-key-delete_brand_icon_"] button,
+        div[class*="st-key-delete_activity_icon_"] button {
+            color: #dc2626 !important;
         }
         div[class*="st-key-edit_brand_"] button:hover,
-        div[class*="st-key-edit_activity_"] button:hover {
-            color: #111827 !important; background: transparent !important; border: none !important; box-shadow: none !important;
+        div[class*="st-key-edit_activity_"] button:hover,
+        div[class*="st-key-delete_brand_icon_"] button:hover,
+        div[class*="st-key-delete_activity_icon_"] button:hover {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
         }
-        div[class*="st-key-delete_"] button, div[class*="st-key-confirm_delete_"] button {
-            background-color: #ff4b4b !important; color: #fff !important; border: 1px solid #e53e3e !important;
+        div[class*="st-key-confirm_delete_"] button,
+        div[class*="st-key-delete_url_"] button {
+            background-color: #ff4b4b !important;
+            color: #fff !important;
+            border: 1px solid #e53e3e !important;
         }
-        div[class*="st-key-delete_"] button:hover, div[class*="st-key-confirm_delete_"] button:hover {
-            background-color: #e53e3e !important; color: #fff !important; border: 1px solid #c53030 !important;
+        div[class*="st-key-confirm_delete_"] button:hover,
+        div[class*="st-key-delete_url_"] button:hover {
+            background-color: #e53e3e !important;
+            border: 1px solid #c53030 !important;
         }
         div[class*="st-key-add_brand_btn"] button,
         div[class*="st-key-add_activity_btn_"] button,
-        div[class*="st-key-add_url_"] button {
-            background-color: #2563eb !important; color: #fff !important; border: 1px solid #1d4ed8 !important;
+        div[class*="st-key-save_url_draft_"] button {
+            background-color: #2563eb !important;
+            color: #fff !important;
+            border: 1px solid #1d4ed8 !important;
         }
         div[class*="st-key-add_brand_btn"] button:hover,
         div[class*="st-key-add_activity_btn_"] button:hover,
-        div[class*="st-key-add_url_"] button:hover {
-            background-color: #1d4ed8 !important; border: 1px solid #1e40af !important;
+        div[class*="st-key-save_url_draft_"] button:hover {
+            background-color: #1d4ed8 !important;
+            border: 1px solid #1e40af !important;
         }
         div[class*="st-key-toggle_brand_open_"] button,
         div[class*="st-key-toggle_brand_closed_"] button,
@@ -194,7 +235,9 @@ def _inject_ui_css() -> None:
         div[class*="st-key-toggle_activity_closed_"] button,
         div[class*="st-key-toggle_sheet_open_"] button,
         div[class*="st-key-toggle_sheet_closed_"] button {
-            background-color: #e5e7eb !important; border: 1px solid #9ca3af !important; color: #111827 !important;
+            background-color: #e5e7eb !important;
+            border: 1px solid #9ca3af !important;
+            color: #111827 !important;
         }
         </style>
         """,
@@ -203,74 +246,77 @@ def _inject_ui_css() -> None:
 
 
 def render_ui_messages(execution_messages: list[dict[str, str]]) -> None:
-    # 상단 로그/알림 블록은 사용자 요청으로 비노출 처리.
-    # 함수 시그니처는 유지해 기존 호출부 호환성을 보장한다.
     _ = execution_messages
 
 
-def _render_management_messages() -> None:
-    # 제목 아래 레이아웃 흔들림 방지를 위해 관리 메시지 블록도 비노출 처리.
-    return
+def _ui_phase_key(value: Any) -> str:
+    key = _safe_text(value).lower()
+    if key in {"pending", "waiting", "ready"}:
+        return "waiting"
+    if key in {"running", "exporting", "downloading"}:
+        return "running"
+    if key in {"completed", "downloaded"}:
+        return "completed"
+    if key == "failed":
+        return "failed"
+    if key == "skipped":
+        return "skipped"
+    return "waiting"
 
 
-def _status_style(status: str) -> str:
-    normalized = _safe_text(status).lower()
-    if normalized == "completed":
-        return "background-color: #dcfce7; color: #166534; font-weight: 600;"
-    if normalized == "failed":
-        return "background-color: #fee2e2; color: #991b1b; font-weight: 600;"
-    if normalized == "running":
-        return "background-color: #dbeafe; color: #1d4ed8; font-weight: 600;"
-    if normalized == "pending":
-        return "background-color: #fef3c7; color: #92400e; font-weight: 600;"
-    if normalized == "skipped":
-        return "background-color: #f3f4f6; color: #6b7280; font-weight: 500;"
-    return ""
+def _status_label_text(value: Any) -> str:
+    return STATUS_LABEL.get(_ui_phase_key(value), "Waiting")
 
 
-def _build_activity_result_df(execution_snapshot: dict[str, Any]) -> pd.DataFrame:
-    summaries_raw = execution_snapshot.get("activity_results") or execution_snapshot.get("activity_summaries") or []
-    if not isinstance(summaries_raw, list) or not summaries_raw:
-        return pd.DataFrame()
+def _status_style_text(value: Any) -> str:
+    return STATUS_STYLE.get(_ui_phase_key(value), "")
 
-    rows: list[dict[str, Any]] = []
-    for item in summaries_raw:
-        if not isinstance(item, dict):
-            continue
-        brand = _safe_text(item.get("brand"))
-        activity = _safe_text(item.get("activity"))
-        workbook_path = _safe_text(item.get("workbook_path"))
-        workbook_name = Path(workbook_path).name if workbook_path else ""
-        rows_by_sheet = item.get("rows_by_sheet") or {}
-        failed_sheets = item.get("failed_sheets") or []
-        failed_sheet_text = ", ".join(str(s) for s in failed_sheets if _safe_text(s))
-        message = _safe_text(item.get("message"))
 
-        if workbook_name:
-            result_message = "전체 시트 처리 완료"
-        elif failed_sheet_text:
-            result_message = f"문제된 시트({failed_sheet_text}) export에 실패해 통합파일이 생성되지 않았습니다."
-        elif message:
-            result_message = message
-        else:
-            result_message = "통합파일이 생성되지 않았습니다."
+def _missing_columns_style_text(value: Any) -> str:
+    return "color: #b91c1c; font-weight: 700;" if _safe_text(value) else ""
 
-        row: dict[str, Any] = {
-            "브랜드": brand,
-            "액티비티": activity,
-            "통합파일": workbook_name,
-            "결과": result_message,
-        }
-        for sheet_name in RESULT_SHEET_COLUMNS:
-            if workbook_name:
-                row[f"{sheet_name} 행수"] = int((rows_by_sheet or {}).get(sheet_name, 0))
-            else:
-                row[f"{sheet_name} 행수"] = ""
-        rows.append(row)
 
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows)
+def _map_styler(styler, func, subset: list[str]):
+    if hasattr(styler, "map"):
+        return styler.map(func, subset=subset)
+    if hasattr(styler, "applymap"):
+        return styler.applymap(func, subset=subset)
+    return styler
+
+
+def _style_status_column(df: pd.DataFrame, status_column: str = "상태"):
+    styler = df.style
+    if status_column in df.columns:
+        styler = _map_styler(styler, _status_style_text, subset=[status_column])
+    return styler
+
+
+def _render_disabled_box(text: str) -> None:
+    st.markdown(
+        f"<div class='meta-disabled-box'>{text}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _execution_modes_enabled() -> tuple[bool, bool]:
+    return (
+        bool(st.session_state.get("enable_report_download", True)),
+        bool(st.session_state.get("enable_action_log_download", True)),
+    )
+
+
+def _render_execution_options() -> None:
+    st.markdown("<div class='meta-section-title'>실행 옵션</div>", unsafe_allow_html=True)
+    cols = st.columns(2)
+    with cols[0]:
+        st.checkbox("캠페인 데이터 다운로드", key="enable_report_download")
+    with cols[1]:
+        st.checkbox("액션 로그 다운로드", key="enable_action_log_download")
+
+    report_enabled, action_log_enabled = _execution_modes_enabled()
+    if not report_enabled and not action_log_enabled:
+        _render_disabled_box("최소 한 개의 실행 항목을 선택해야 합니다.")
+
 
 def _render_sheet_inline_editor(
     *,
@@ -286,75 +332,69 @@ def _render_sheet_inline_editor(
     safe_activity = _safe_key(activity_id)
     safe_sheet = _safe_key(sheet_name)
 
-    if entries:
-        for idx, item in enumerate(list(entries)):
-            current_url = _extract_url(item)
-            edit_key = f"url_edit_{safe_activity}_{safe_sheet}_{idx}"
-            st.session_state.setdefault(edit_key, current_url)
+    for idx, item in enumerate(list(entries)):
+        current_url = _extract_url(item)
+        readonly_key = f"url_existing_{safe_activity}_{safe_sheet}_{idx}"
+        st.session_state.setdefault(readonly_key, current_url)
 
-            row_cols = st.columns([0.45, 5.6, 0.9, 0.9], vertical_alignment="center")
-            row_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
-            row_cols[1].text_input(f"URL {idx + 1}", key=edit_key, label_visibility="collapsed")
-            if row_cols[2].button("💾", key=f"save_url_{safe_activity}_{safe_sheet}_{idx}", use_container_width=True):
-                ok, message, _ = update_sheet_url(
-                    config_data,
-                    brand_code=brand_code,
-                    activity_name=activity_name,
-                    sheet_name=sheet_name,
-                    index=idx,
-                    raw_url=st.session_state.get(edit_key, ""),
-                )
-                if ok:
-                    save_callback()
-                    _push_management_message(
-                        f"✅ {brand_name} · {activity_name} · {sheet_name} URL을 수정했습니다.",
-                        level="success",
-                    )
-                    st.rerun()
+        row_cols = st.columns([0.45, 5.9, 1.0], vertical_alignment="center")
+        row_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
+        row_cols[1].text_input(
+            f"URL {idx + 1}",
+            key=readonly_key,
+            label_visibility="collapsed",
+            disabled=True,
+        )
+        if row_cols[2].button(
+            "삭제",
+            key=f"delete_url_{safe_activity}_{safe_sheet}_{idx}",
+            use_container_width=True,
+        ):
+            ok, message = delete_sheet_url(
+                config_data,
+                brand_code=brand_code,
+                activity_name=activity_name,
+                sheet_name=sheet_name,
+                index=idx,
+            )
+            if ok:
+                save_callback()
+                _toast("URL이 삭제되었습니다.", icon="✅")
                 _push_management_message(
-                    f"⚠️ {brand_name} · {activity_name} · {sheet_name} URL 수정 실패: {message}",
-                    level="warning",
+                    f"✅ {brand_name} · {activity_name} · {sheet_name} URL을 삭제했습니다.",
+                    level="success",
                 )
+                st.rerun()
+            _push_management_message(
+                f"⚠️ {brand_name} · {activity_name} · {sheet_name} URL 삭제 실패: {message}",
+                level="warning",
+            )
 
-            if row_cols[3].button("🗑️", key=f"delete_url_{safe_activity}_{safe_sheet}_{idx}", use_container_width=True):
-                ok, message = delete_sheet_url(
-                    config_data,
-                    brand_code=brand_code,
-                    activity_name=activity_name,
-                    sheet_name=sheet_name,
-                    index=idx,
-                )
-                if ok:
-                    save_callback()
-                    _toast("URL이 삭제되었습니다.", icon="✅")
-                    _push_management_message(
-                        f"✅ {brand_name} · {activity_name} · {sheet_name} URL을 삭제했습니다.",
-                        level="success",
-                    )
-                    st.rerun()
-                _push_management_message(
-                    f"⚠️ {brand_name} · {activity_name} · {sheet_name} URL 삭제 실패: {message}",
-                    level="warning",
-                )
-
-    add_input_key = f"url_add_{safe_activity}_{safe_sheet}"
-    _consume_input_reset(add_input_key)
-    add_cols = st.columns([0.45, 5.6, 0.9, 0.9], vertical_alignment="center")
-    add_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
-    raw_candidate = add_cols[1].text_input(
-        f"{sheet_name} 새 URL",
-        key=add_input_key,
+    draft_key = f"url_draft_{safe_activity}_{safe_sheet}"
+    _consume_input_reset(draft_key)
+    draft_cols = st.columns([0.45, 5.9, 1.0], vertical_alignment="center")
+    draft_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
+    raw_candidate = draft_cols[1].text_input(
+        f"{sheet_name} URL 입력",
+        key=draft_key,
         placeholder="Meta report URL을 붙여넣으세요.",
         label_visibility="collapsed",
     )
     if _safe_text(raw_candidate):
         try:
-            preview = clean_report_url(raw_candidate, default_event_source=_safe_text(config_data.get("view_event_source")))
-            add_cols[1].caption(f"미리보기: {preview}")
+            preview = clean_report_url(
+                raw_candidate,
+                default_event_source=_safe_text(config_data.get("view_event_source")),
+            )
+            draft_cols[1].caption(f"미리보기: {preview}")
         except UrlValidationError as exc:
-            add_cols[1].error(f"URL 파싱 실패: {exc}")
+            draft_cols[1].error(f"URL 파싱 실패: {exc}")
 
-    if add_cols[2].button("저장", key=f"add_url_{safe_activity}_{safe_sheet}", use_container_width=True):
+    if draft_cols[2].button(
+        "저장",
+        key=f"save_url_draft_{safe_activity}_{safe_sheet}",
+        use_container_width=True,
+    ):
         ok, message, _ = add_sheet_url(
             config_data,
             brand_code=brand_code,
@@ -364,19 +404,16 @@ def _render_sheet_inline_editor(
         )
         if ok:
             save_callback()
-            _request_input_reset(add_input_key)
+            _request_input_reset(draft_key)
             _push_management_message(
-                f"✅ {brand_name} · {activity_name} · {sheet_name} URL을 추가했습니다.",
+                f"✅ {brand_name} · {activity_name} · {sheet_name} URL을 저장했습니다.",
                 level="success",
             )
             st.rerun()
         _push_management_message(
-            f"⚠️ {brand_name} · {activity_name} · {sheet_name} URL 추가 실패: {message}",
+            f"⚠️ {brand_name} · {activity_name} · {sheet_name} URL 저장 실패: {message}",
             level="warning",
         )
-    if add_cols[3].button("삭제", key=f"delete_new_url_{safe_activity}_{safe_sheet}", use_container_width=True):
-        _request_input_reset(add_input_key)
-        st.rerun()
 
 
 def _render_activity_sheets(
@@ -393,7 +430,7 @@ def _render_activity_sheets(
     header_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
     header_cols[1].markdown("**시트**")
     header_cols[2].markdown("**URL 현황**")
-    header_cols[3].markdown("**열기**")
+    header_cols[3].markdown("**편집**")
 
     for sheet_name in SHEET_DISPLAY_ORDER:
         entries = _ensure_sheet_entries(activity, sheet_name)
@@ -429,7 +466,13 @@ def _render_activity_sheets(
             )
 
 
-def _render_activity_row(*, config_data: dict[str, Any], save_callback: Callable[[], None], brand: dict[str, Any], activity: dict[str, Any]) -> None:
+def _render_activity_row(
+    *,
+    config_data: dict[str, Any],
+    save_callback: Callable[[], None],
+    brand: dict[str, Any],
+    activity: dict[str, Any],
+) -> None:
     brand_code = _safe_text(brand.get("code"))
     brand_name = _safe_text(brand.get("name"))
     activity_name = _safe_text(activity.get("name"))
@@ -438,12 +481,7 @@ def _render_activity_row(*, config_data: dict[str, Any], save_callback: Callable
     is_selected = activity_id in set(st.session_state.get("selected_activity_ids", set()))
 
     ready_sheet_count = _ready_sheet_count(activity)
-    if ready_sheet_count > 0:
-        badge = f"🟢 {ready_sheet_count}/6 시트 준비"
-    elif is_selected:
-        badge = "🔴 0/6 시트 준비"
-    else:
-        badge = "⚫ 0/6 시트 준비"
+    badge = f"{ready_sheet_count}/{len(SHEET_DISPLAY_ORDER)} 시트 등록"
 
     checkbox_key = f"activity_checkbox_{safe_activity}"
     st.session_state[checkbox_key] = is_selected
@@ -451,7 +489,7 @@ def _render_activity_row(*, config_data: dict[str, Any], save_callback: Callable
     is_open = bool(st.session_state.get(activity_open_key, False))
     is_editing = _safe_text(st.session_state.get("ui_edit_activity")) == activity_id
 
-    row_cols = st.columns([0.45, 0.55, 3.9, 0.35, 1.7, 0.8], vertical_alignment="center")
+    row_cols = st.columns([0.45, 0.55, 4.2, 0.45, 0.45, 1.5, 0.8], vertical_alignment="center")
     row_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
     row_cols[1].checkbox(
         "Activity",
@@ -465,16 +503,22 @@ def _render_activity_row(*, config_data: dict[str, Any], save_callback: Callable
         st.session_state["ui_edit_activity"] = activity_id
         st.session_state[f"ui_edit_activity_value_{safe_activity}"] = activity_name
         st.rerun()
+    if row_cols[4].button("🗑️", key=f"delete_activity_icon_{safe_activity}", use_container_width=True):
+        st.session_state["pending_activity_delete"] = activity_id
+        st.rerun()
 
-    row_cols[4].markdown(f"<span class='meta-tree-caption'>{badge}</span>", unsafe_allow_html=True)
+    row_cols[5].markdown(
+        f"<span class='meta-tree-caption'>{badge}</span>",
+        unsafe_allow_html=True,
+    )
     toggle_activity_key = f"toggle_activity_open_{safe_activity}" if is_open else f"toggle_activity_closed_{safe_activity}"
-    if row_cols[5].button("▼" if is_open else "▶", key=toggle_activity_key, use_container_width=True):
+    if row_cols[6].button("▼" if is_open else "▶", key=toggle_activity_key, use_container_width=True):
         _toggle_bool_key(activity_open_key)
         st.rerun()
 
     if is_editing:
         edit_value_key = f"ui_edit_activity_value_{safe_activity}"
-        edit_cols = st.columns([0.45, 4.5, 0.9, 0.9, 2.0], vertical_alignment="center")
+        edit_cols = st.columns([0.45, 4.6, 0.9, 0.9, 1.95], vertical_alignment="center")
         edit_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
         edit_cols[1].text_input("액티비티 이름", key=edit_value_key, label_visibility="collapsed")
         if edit_cols[2].button("✅", key=f"apply_activity_rename_{safe_activity}", use_container_width=True):
@@ -491,6 +535,26 @@ def _render_activity_row(*, config_data: dict[str, Any], save_callback: Callable
             st.session_state["ui_edit_activity"] = ""
             st.rerun()
 
+    if _safe_text(st.session_state.get("pending_activity_delete")) == activity_id:
+        st.warning("이 액티비티를 삭제하면 하위 report URL도 함께 삭제됩니다.")
+        confirm_cols = st.columns([0.45, 1.2, 1.2, 4.0], vertical_alignment="center")
+        confirm_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
+        if confirm_cols[1].button("삭제 확인", key=f"confirm_delete_activity_{safe_activity}", use_container_width=True):
+            ok, message = delete_activity(config_data, brand_code, activity_name)
+            st.session_state["pending_activity_delete"] = ""
+            if ok:
+                selected_ids = set(st.session_state.get("selected_activity_ids", set()))
+                selected_ids.discard(activity_id)
+                st.session_state["selected_activity_ids"] = selected_ids
+                save_callback()
+                _toast(f"'{activity_name}'이(가) 삭제되었습니다.", icon="✅")
+                _push_management_message(f"✅ {brand_name} · {activity_name} 액티비티를 삭제했습니다.", level="success")
+                st.rerun()
+            _push_management_message(f"⚠️ {brand_name} · {activity_name} 삭제 실패: {message}", level="warning")
+        if confirm_cols[2].button("취소", key=f"cancel_delete_activity_{safe_activity}", use_container_width=True):
+            st.session_state["pending_activity_delete"] = ""
+            st.rerun()
+
     if not is_open:
         return
 
@@ -504,32 +568,13 @@ def _render_activity_row(*, config_data: dict[str, Any], save_callback: Callable
         save_callback=save_callback,
     )
 
-    delete_cols = st.columns([0.45, 1.7, 4.3], vertical_alignment="center")
-    delete_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
-    if delete_cols[1].button("🗑️ 액티비티 삭제", key=f"delete_activity_{safe_activity}", use_container_width=True):
-        st.session_state["pending_activity_delete"] = activity_id
 
-    if _safe_text(st.session_state.get("pending_activity_delete")) == activity_id:
-        st.warning("이 액티비티를 삭제하면 하위 report URL도 함께 삭제됩니다.")
-        confirm_cols = st.columns([0.45, 1.2, 1.2, 3.6], vertical_alignment="center")
-        confirm_cols[0].markdown("&nbsp;", unsafe_allow_html=True)
-        if confirm_cols[1].button("삭제 확인", key=f"confirm_delete_activity_{safe_activity}", use_container_width=True):
-            ok, message = delete_activity(config_data, brand_code, activity_name)
-            st.session_state["pending_activity_delete"] = ""
-            if ok:
-                selected_ids = set(st.session_state.get("selected_activity_ids", set()))
-                selected_ids.discard(activity_id)
-                st.session_state["selected_activity_ids"] = selected_ids
-                save_callback()
-                _toast(f"🗑️ '{activity_name}'이(가) 삭제되었습니다.", icon="✅")
-                _push_management_message(f"✅ {brand_name} · {activity_name} 액티비티를 삭제했습니다.", level="success")
-                st.rerun()
-            _push_management_message(f"⚠️ {brand_name} · {activity_name} 삭제 실패: {message}", level="warning")
-        if confirm_cols[2].button("취소", key=f"cancel_delete_activity_{safe_activity}", use_container_width=True):
-            st.session_state["pending_activity_delete"] = ""
-            st.rerun()
-
-def _render_brand_card(*, config_data: dict[str, Any], save_callback: Callable[[], None], brand: dict[str, Any]) -> None:
+def _render_brand_card(
+    *,
+    config_data: dict[str, Any],
+    save_callback: Callable[[], None],
+    brand: dict[str, Any],
+) -> None:
     brand_code = _safe_text(brand.get("code"))
     brand_name = _safe_text(brand.get("name"))
     safe_brand = _safe_key(brand_code)
@@ -551,7 +596,7 @@ def _render_brand_card(*, config_data: dict[str, Any], save_callback: Callable[[
     is_editing = _safe_text(st.session_state.get("ui_edit_brand")) == brand_code
 
     with st.container(border=True):
-        row_cols = st.columns([0.55, 3.9, 0.35, 1.6, 0.75], vertical_alignment="center")
+        row_cols = st.columns([0.55, 4.1, 0.45, 0.45, 1.6, 0.75], vertical_alignment="center")
         row_cols[0].checkbox(
             "Brand",
             key=checkbox_key,
@@ -559,26 +604,26 @@ def _render_brand_card(*, config_data: dict[str, Any], save_callback: Callable[[
             on_change=_on_brand_checkbox_change,
             args=(brand_code, checkbox_key),
         )
-
         row_cols[1].markdown(f"**{brand_name}**")
         if row_cols[2].button("✏️", key=f"edit_brand_{safe_brand}", use_container_width=True):
             st.session_state["ui_edit_brand"] = brand_code
             st.session_state[f"ui_edit_brand_value_{safe_brand}"] = brand_name
             st.rerun()
-
-        row_cols[3].markdown(
+        if row_cols[3].button("🗑️", key=f"delete_brand_icon_{safe_brand}", use_container_width=True):
+            st.session_state["pending_brand_delete"] = brand_code
+            st.rerun()
+        row_cols[4].markdown(
             f"<span class='meta-tree-caption'>{selected_count}/{total_count} 액티비티 선택</span>",
             unsafe_allow_html=True,
         )
-
         toggle_brand_key = f"toggle_brand_open_{safe_brand}" if is_open else f"toggle_brand_closed_{safe_brand}"
-        if row_cols[4].button("▼" if is_open else "▶", key=toggle_brand_key, use_container_width=True):
+        if row_cols[5].button("▼" if is_open else "▶", key=toggle_brand_key, use_container_width=True):
             _toggle_bool_key(brand_open_key)
             st.rerun()
 
         if is_editing:
             edit_value_key = f"ui_edit_brand_value_{safe_brand}"
-            edit_cols = st.columns([4.7, 0.9, 0.9, 2.0], vertical_alignment="center")
+            edit_cols = st.columns([4.8, 0.9, 0.9, 1.95], vertical_alignment="center")
             edit_cols[0].text_input("브랜드 이름", key=edit_value_key, label_visibility="collapsed")
             if edit_cols[1].button("✅", key=f"apply_brand_rename_{safe_brand}", use_container_width=True):
                 new_name = st.session_state.get(edit_value_key, "")
@@ -593,6 +638,23 @@ def _render_brand_card(*, config_data: dict[str, Any], save_callback: Callable[[
                 st.session_state["ui_edit_brand"] = ""
                 st.rerun()
 
+        if _safe_text(st.session_state.get("pending_brand_delete")) == brand_code:
+            st.warning("브랜드를 삭제하면 하위 액티비티와 report URL이 모두 삭제됩니다.")
+            confirm_cols = st.columns([1.2, 1.2, 3.8], vertical_alignment="center")
+            if confirm_cols[0].button("삭제 확인", key=f"confirm_delete_brand_{safe_brand}", use_container_width=True):
+                ok, message = delete_brand(config_data, brand_code)
+                st.session_state["pending_brand_delete"] = ""
+                if ok:
+                    _remove_brand_selections(brand_code)
+                    save_callback()
+                    _toast(f"'{brand_name}'이(가) 삭제되었습니다.", icon="✅")
+                    _push_management_message(f"✅ {brand_name} 브랜드를 삭제했습니다.", level="success")
+                    st.rerun()
+                _push_management_message(f"⚠️ {brand_name} 삭제 실패: {message}", level="warning")
+            if confirm_cols[1].button("취소", key=f"cancel_delete_brand_{safe_brand}", use_container_width=True):
+                st.session_state["pending_brand_delete"] = ""
+                st.rerun()
+
         if not is_open:
             return
 
@@ -602,10 +664,10 @@ def _render_brand_card(*, config_data: dict[str, Any], save_callback: Callable[[
         else:
             st.info("등록된 액티비티가 없습니다.")
 
-        st.markdown("###### + 액티비티 추가")
+        st.markdown("##### + 액티비티 추가")
         add_key = f"add_activity_input_{safe_brand}"
         _consume_input_reset(add_key)
-        add_cols = st.columns([4.5, 1.3], vertical_alignment="center")
+        add_cols = st.columns([4.6, 1.2], vertical_alignment="center")
         add_cols[0].text_input("액티비티 추가", key=add_key, placeholder="예: Activity 1", label_visibility="collapsed")
         if add_cols[1].button("추가", key=f"add_activity_btn_{safe_brand}", use_container_width=True):
             ok, message = add_activity(config_data, brand_code, st.session_state.get(add_key, ""))
@@ -616,26 +678,122 @@ def _render_brand_card(*, config_data: dict[str, Any], save_callback: Callable[[
                 st.rerun()
             _push_management_message(f"⚠️ {brand_name} 액티비티 추가 실패: {message}", level="warning")
 
-        delete_cols = st.columns([1.6, 4.2], vertical_alignment="center")
-        if delete_cols[0].button("🗑️ 브랜드 삭제", key=f"delete_brand_{safe_brand}", use_container_width=True):
-            st.session_state["pending_brand_delete"] = brand_code
 
-        if _safe_text(st.session_state.get("pending_brand_delete")) == brand_code:
-            st.warning("브랜드를 삭제하면 하위 액티비티와 report URL이 모두 삭제됩니다.")
-            confirm_cols = st.columns([1.2, 1.2, 3.4], vertical_alignment="center")
-            if confirm_cols[0].button("삭제 확인", key=f"confirm_delete_brand_{safe_brand}", use_container_width=True):
-                ok, message = delete_brand(config_data, brand_code)
-                st.session_state["pending_brand_delete"] = ""
-                if ok:
-                    _remove_brand_selections(brand_code)
-                    save_callback()
-                    _toast(f"🗑️ '{brand_name}'이(가) 삭제되었습니다.", icon="✅")
-                    _push_management_message(f"✅ {brand_name} 브랜드를 삭제했습니다.", level="success")
-                    st.rerun()
-                _push_management_message(f"⚠️ {brand_name} 삭제 실패: {message}", level="warning")
-            if confirm_cols[1].button("취소", key=f"cancel_delete_brand_{safe_brand}", use_container_width=True):
-                st.session_state["pending_brand_delete"] = ""
-                st.rerun()
+def _build_report_df(execution_snapshot: dict[str, Any]) -> pd.DataFrame:
+    report_rows = execution_snapshot.get("rows") or []
+    if not report_rows:
+        return pd.DataFrame()
+
+    visible_rows = [
+        row
+        for row in report_rows
+        if int(getattr(row, "url_count", 0) or 0) > 0
+    ]
+    if not visible_rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(
+        [
+            {
+                "브랜드": row.brand,
+                "액티비티": row.activity,
+                "시트": row.sheet,
+                "상태": _status_label_text(row.status),
+                "메시지": row.message,
+                "누락 컬럼": row.missing_columns_text,
+                "최종 갱신": row.last_updated,
+            }
+            for row in visible_rows
+        ]
+    )
+
+
+def _build_activity_progress_map(execution_snapshot: dict[str, Any]) -> dict[str, dict[str, int]]:
+    progress_map: dict[str, dict[str, int]] = {}
+    for row in execution_snapshot.get("rows") or []:
+        key = f"{_safe_text(row.brand)}::{_safe_text(row.activity)}"
+        if key not in progress_map:
+            progress_map[key] = {"processed": 0, "total": 0}
+        if int(getattr(row, "url_count", 0) or 0) <= 0 and _ui_phase_key(row.status) == "skipped":
+            continue
+        progress_map[key]["total"] += 1
+        if _ui_phase_key(row.status) in {"completed", "failed", "skipped"}:
+            progress_map[key]["processed"] += 1
+    return progress_map
+
+
+def _build_activity_result_df(execution_snapshot: dict[str, Any]) -> pd.DataFrame:
+    summaries_raw = execution_snapshot.get("activity_results") or []
+    if not isinstance(summaries_raw, list) or not summaries_raw:
+        return pd.DataFrame()
+
+    progress_map = _build_activity_progress_map(execution_snapshot)
+    rows: list[dict[str, Any]] = []
+    for item in summaries_raw:
+        if not isinstance(item, dict):
+            continue
+        brand = _safe_text(item.get("brand"))
+        activity = _safe_text(item.get("activity"))
+        status = _safe_text(item.get("status"))
+        if not status:
+            status = "Completed" if _safe_text(item.get("workbook_path")) else "Failed"
+        progress = progress_map.get(f"{brand}::{activity}", {"processed": 0, "total": 0})
+        rows.append(
+            {
+                "브랜드": brand,
+                "액티비티": activity,
+                "상태": _status_label_text(status),
+                "처리 시트 수": f"{progress['processed']}/{progress['total']}",
+                "메시지": _safe_text(item.get("message")),
+                "시간": _safe_text(item.get("updated_at")),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    if "시간" in df.columns:
+        df = df.sort_values(by=["시간"], ascending=False)
+    return df
+
+
+def _build_history_log_df(execution_snapshot: dict[str, Any]) -> pd.DataFrame:
+    history_rows = execution_snapshot.get("history_rows") or []
+    if not history_rows:
+        return pd.DataFrame()
+
+    rows = [
+        {
+            "브랜드": row.brand,
+            "액티비티": row.activity,
+            "계정 수": row.account_count,
+            "상태": _status_label_text(row.status),
+            "메시지": row.message,
+            "시간": row.last_updated,
+        }
+        for row in history_rows
+    ]
+    df = pd.DataFrame(rows)
+    if "시간" in df.columns:
+        df = df.sort_values(by=["시간"], ascending=False)
+    return df
+
+
+def _render_start_help_box(*, validation: ValidationResult, is_running: bool, selected_count: int) -> None:
+    del is_running
+    report_enabled, action_log_enabled = _execution_modes_enabled()
+    if selected_count <= 0:
+        st.markdown(
+            "<p class='meta-caption-muted'>다운로드할 액티비티를 선택하세요.</p>",
+            unsafe_allow_html=True,
+        )
+        return
+    if not report_enabled and not action_log_enabled:
+        _render_disabled_box("최소 한 개의 실행 항목을 선택해야 합니다.")
+        return
+    if not validation.can_run and validation.reasons:
+        _render_disabled_box(" / ".join(validation.reasons))
 
 
 def render_top_section(
@@ -649,81 +807,81 @@ def render_top_section(
     _inject_ui_css()
 
     is_running = bool(execution_snapshot.get("is_running"))
-    selected_count = len(set(st.session_state.get("selected_activity_ids", set())))
-    if is_running:
-        help_text = "현재 실행 중입니다."
-    elif selected_count <= 0:
-        help_text = "아래에서 Export할 Report를 선택하세요."
-    elif not validation.can_run:
-        help_text = "선택한 Report의 준비 상태를 확인하세요."
-    else:
-        help_text = "Meta에 로그인하고 Report를 다운로드합니다."
+    report_enabled, action_log_enabled = _execution_modes_enabled()
     export_disabled = is_running or (not validation.can_run)
+    selected_count = len(set(st.session_state.get("selected_activity_ids", set())))
 
-    header_cols = st.columns([3.7, 1.6], vertical_alignment="top")
-    header_cols[0].subheader("📋 Export할 Report 선택하기")
-    header_cols[1].markdown(
-        "<div class='meta-sub-caption'>Meta에 로그인하고 Report를 다운로드합니다.</div>",
-        unsafe_allow_html=True,
-    )
-    if header_cols[1].button(
-        "Export",
-        type="primary",
-        disabled=export_disabled,
-        use_container_width=True,
-        help=help_text,
-    ):
-        on_start_execution()
+    with st.container(border=True):
+        st.markdown("<div class='meta-main-card-title'>액티비티 선택</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<p class='meta-caption-muted'>선택한 액티비티의 캠페인 데이터/액션 로그를 다운로드합니다.</p>",
+            unsafe_allow_html=True,
+        )
 
-    brands = config_data.get("brands", [])
-    if brands:
-        for brand in brands:
-            _render_brand_card(config_data=config_data, save_callback=save_callback, brand=brand)
-    else:
-        st.info("등록된 브랜드가 없습니다. 먼저 브랜드를 추가하세요.")
+        brands = config_data.get("brands", [])
+        if brands:
+            for brand in brands:
+                _render_brand_card(config_data=config_data, save_callback=save_callback, brand=brand)
+        else:
+            _render_disabled_box("등록된 브랜드가 없습니다. 먼저 브랜드를 추가하세요.")
 
-    st.markdown("##### + 브랜드 추가")
-    _consume_input_reset("new_brand_name_input")
-    add_cols = st.columns([4.5, 1.3], vertical_alignment="center")
-    add_cols[0].text_input("브랜드 추가", key="new_brand_name_input", placeholder="예: Brand A", label_visibility="collapsed")
-    if add_cols[1].button("추가", key="add_brand_btn", use_container_width=True):
-        ok, message = add_brand(config_data, st.session_state.get("new_brand_name_input", ""))
-        if ok:
-            save_callback()
-            _request_input_reset("new_brand_name_input")
-            _push_management_message("✅ 브랜드를 추가했습니다.", level="success")
-            st.rerun()
-        _push_management_message(f"⚠️ 브랜드 추가 실패: {message}", level="warning")
+        st.markdown("##### + 브랜드 추가")
+        _consume_input_reset("new_brand_name_input")
+        add_cols = st.columns([4.8, 1.1], vertical_alignment="center")
+        add_cols[0].text_input(
+            "브랜드 추가",
+            key="new_brand_name_input",
+            placeholder="예: Brand A",
+            label_visibility="collapsed",
+        )
+        if add_cols[1].button("추가", key="add_brand_btn", use_container_width=True):
+            ok, message = add_brand(config_data, st.session_state.get("new_brand_name_input", ""))
+            if ok:
+                save_callback()
+                _request_input_reset("new_brand_name_input")
+                _push_management_message("✅ 브랜드를 추가했습니다.", level="success")
+                st.rerun()
+            _push_management_message(f"⚠️ 브랜드 추가 실패: {message}", level="warning")
+
+        _render_execution_options()
+        _render_start_help_box(
+            validation=validation,
+            is_running=is_running,
+            selected_count=selected_count,
+        )
+
+        if st.button(
+            "다운로드하기",
+            type="primary",
+            disabled=export_disabled or (not report_enabled and not action_log_enabled),
+            use_container_width=True,
+            key="meta_start_btn",
+        ):
+            on_start_execution()
+        st.markdown(
+            "<p class='meta-caption-muted'>버튼을 누르고 실행되는 브라우저 창에서 Meta Ads 로그인을 완료해주세요.</p>",
+            unsafe_allow_html=True,
+        )
 
 
 def render_sidebar_execution_section(
     *,
-    on_output_dir_change: Callable[[], None] | None = None,
-    on_downloads_dir_change: Callable[[], None] | None = None,
-    on_logs_dir_change: Callable[[], None] | None = None,
+    preview_paths: dict[str, Any],
+    is_running: bool,
+    on_base_parent_dir_change: Callable[[], None] | None = None,
 ) -> None:
+    del preview_paths, is_running
     with st.sidebar:
         st.subheader("⚙️ Run Settings")
         st.selectbox(
             "브라우저",
             options=["msedge", "chrome"],
-            index=0 if _safe_text(st.session_state.get("browser")) != "chrome" else 1,
             key="browser",
         )
         st.text_input(
-            "결과 저장 경로",
-            key="output_dir_input",
-            on_change=on_output_dir_change,
-        )
-        st.text_input(
-            "다운로드 경로",
-            key="downloads_dir_input",
-            on_change=on_downloads_dir_change,
-        )
-        st.text_input(
-            "로그 경로",
-            key="logs_dir_input",
-            on_change=on_logs_dir_change,
+            "저장 부모 경로",
+            key="base_parent_dir_input",
+            on_change=on_base_parent_dir_change,
         )
 
 
@@ -733,51 +891,52 @@ def render_bottom_section(
     execution_snapshot: dict[str, Any],
     activity_label_by_id: dict[str, str],
 ) -> None:
+    del validation, activity_label_by_id
+
     st.subheader("📊 진행 상황")
-
-    st.markdown("#### 실행 준비 상태")
-    if validation.readiness_rows:
-        readiness_df = pd.DataFrame(
-            [{"브랜드": r.brand, "액티비티": r.activity, "준비 시트 수": r.sheet_count, "URL 수": r.url_count} for r in validation.readiness_rows]
+    run_report_enabled = bool(
+        st.session_state.get(
+            "run_enable_report_download",
+            st.session_state.get("enable_report_download", True),
         )
-        st.dataframe(readiness_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("선택된 액티비티가 없습니다.")
-
-    if validation.missing_url_activity_ids:
-        labels = [activity_label_by_id.get(item_id, item_id) for item_id in validation.missing_url_activity_ids]
-        st.warning("아래 액티비티는 report URL이 없어 export할 수 없습니다: " + ", ".join(labels))
-
-    st.markdown("#### 실행 로그")
-    rows = execution_snapshot.get("rows", [])
-    if rows:
-        log_df = pd.DataFrame(
-            [
-                {
-                    "브랜드": row.brand,
-                    "액티비티": row.activity,
-                    "시트": row.sheet,
-                    "URL 수": row.url_count,
-                    "상태": row.status,
-                    "메시지": row.message,
-                    "최종 갱신": row.last_updated,
-                }
-                for row in rows
-            ]
+    )
+    run_action_log_enabled = bool(
+        st.session_state.get(
+            "run_enable_action_log_download",
+            st.session_state.get("enable_action_log_download", True),
         )
-        filtered_df = log_df[log_df["상태"] != "Skipped"].copy()
-        if filtered_df.empty:
-            st.caption("표시할 로그가 없습니다. (Skipped 제외)")
-        else:
-            styled = filtered_df.style.map(_status_style, subset=["상태"])
-            st.dataframe(styled, use_container_width=True, hide_index=True)
-    else:
-        st.info("실행 로그가 없습니다.")
+    )
 
-    result_df = _build_activity_result_df(execution_snapshot)
-    if not result_df.empty:
-        st.markdown("#### 처리 완료 요약 / 생성된 통합 파일")
-        st.dataframe(result_df, use_container_width=True, hide_index=True)
+    st.markdown("#### 캠페인 데이터 다운로드")
+    report_df = _build_report_df(execution_snapshot)
+    if not run_report_enabled:
+        _render_disabled_box("캠페인 데이터 다운로드를 켜면 진행 상태가 표시됩니다.")
+    elif report_df.empty:
+        _render_disabled_box("캠페인 데이터 다운로드 이력이 없습니다.")
+    else:
+        styled_report_df = _style_status_column(report_df, "상태")
+        styled_report_df = _map_styler(styled_report_df, _missing_columns_style_text, subset=["누락 컬럼"])
+        st.dataframe(styled_report_df, use_container_width=True, hide_index=True)
+
+    st.markdown("#### 캠페인 데이터 통합본 생성")
+    activity_result_df = _build_activity_result_df(execution_snapshot)
+    if not run_report_enabled:
+        _render_disabled_box("캠페인 데이터 다운로드를 켜면 진행 상태가 표시됩니다.")
+    elif activity_result_df.empty:
+        _render_disabled_box("다운로드 후 캠페인 데이터 통합본 생성 상태가 표시됩니다.")
+    else:
+        styled_activity_result_df = _style_status_column(activity_result_df, "상태")
+        st.dataframe(styled_activity_result_df, use_container_width=True, hide_index=True)
+
+    st.markdown("#### 액션 로그 다운로드")
+    history_log_df = _build_history_log_df(execution_snapshot)
+    if not run_action_log_enabled:
+        _render_disabled_box("액션 로그 다운로드를 켜면 진행 상태가 표시됩니다.")
+    elif history_log_df.empty:
+        _render_disabled_box("실행 후 액션 로그 다운로드 상태가 표시됩니다.")
+    else:
+        styled_history_log_df = _style_status_column(history_log_df, "상태")
+        st.dataframe(styled_history_log_df, use_container_width=True, hide_index=True)
 
     log_file = _safe_text(execution_snapshot.get("log_file"))
     run_id = _safe_text(execution_snapshot.get("run_id"))
