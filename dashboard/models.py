@@ -69,6 +69,20 @@ class ActivityExecutionPlan:
 
 
 @dataclass(frozen=True)
+class HistoryAccountTarget:
+    act: str
+    business_id: str
+
+
+@dataclass(frozen=True)
+class HistoryExecutionPlan:
+    brand_code: str
+    brand_name: str
+    activity_name: str
+    account_targets: list[HistoryAccountTarget]
+
+
+@dataclass(frozen=True)
 class ReadinessRow:
     brand: str
     activity: str
@@ -94,6 +108,18 @@ class LogRow:
     status: str
     message: str
     last_updated: str
+    missing_columns_text: str = ""
+
+
+@dataclass(frozen=True)
+class HistoryLogRow:
+    row_id: str
+    brand: str
+    activity: str
+    account_count: int
+    status: str
+    message: str
+    last_updated: str
 
 
 @dataclass(frozen=True)
@@ -109,6 +135,22 @@ class AdapterExecutionResult:
     run_id: str
     log_file: str
     outputs: list[ActivityExecutionOutput]
+
+
+@dataclass(frozen=True)
+class HistoryExecutionOutput:
+    brand_name: str
+    activity_name: str
+    file_path: str
+    row_count: int
+    failed_accounts: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class HistoryAdapterExecutionResult:
+    run_id: str
+    log_file: str
+    outputs: list[HistoryExecutionOutput]
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable
@@ -42,20 +41,6 @@ def _now_run_id() -> str:
 
 def _now_yymmdd() -> str:
     return dt.datetime.now().strftime("%y%m%d_%H%M%S")
-
-
-def _run_date_folder_name(run_id: str) -> str:
-    token = str(run_id or "").strip().split("_")[0]
-    if len(token) == 8 and token.isdigit():
-        return f"{token[0:4]}-{token[4:6]}-{token[6:8]}"
-    return dt.datetime.now().strftime("%Y-%m-%d")
-
-
-def _with_run_date_dir(base_dir: Path, run_date_folder: str) -> Path:
-    resolved = base_dir.expanduser().resolve()
-    if resolved.name == run_date_folder:
-        return resolved
-    return (resolved / run_date_folder).resolve()
 
 
 def _normalize_engine_browser(browser: str) -> str:
@@ -114,7 +99,6 @@ def _get_browser_window_state(sb: Any, logger: Any) -> str:
         if state in {"normal", "minimized", "maximized", "fullscreen"}:
             return state
     with suppress(Exception):
-        # Fallback path when CDP bounds lookup is unavailable.
         if driver.execute_script("return document.hidden === true;"):
             return "minimized"
     with suppress(Exception):
@@ -126,18 +110,21 @@ def _emit_row(
     callback: ProgressCallback | None,
     *,
     row_id: str,
-    status: str,
-    message: str,
+    status: str | None = None,
+    message: str | None = None,
+    missing_columns_text: str | None = None,
 ) -> None:
-    _emit(
-        callback,
-        {
-            "type": "row_update",
-            "row_id": row_id,
-            "status": status,
-            "message": message,
-        },
-    )
+    payload: dict[str, Any] = {
+        "type": "row_update",
+        "row_id": row_id,
+    }
+    if status is not None:
+        payload["status"] = status
+    if message is not None:
+        payload["message"] = message
+    if missing_columns_text is not None:
+        payload["missing_columns_text"] = missing_columns_text
+    _emit(callback, payload)
 
 
 def _emit_activity_result(
@@ -145,6 +132,7 @@ def _emit_activity_result(
     *,
     brand: str,
     activity: str,
+    status: str,
     workbook_path: str = "",
     rows_by_sheet: dict[str, int] | None = None,
     failed_sheets: list[str] | None = None,
@@ -156,6 +144,7 @@ def _emit_activity_result(
             "type": "activity_result",
             "brand": brand,
             "activity": activity,
+            "status": status,
             "workbook_path": workbook_path,
             "rows_by_sheet": dict(rows_by_sheet or {}),
             "failed_sheets": list(failed_sheets or []),
@@ -169,7 +158,6 @@ def _resolve_unified_output_pattern(naming_config: dict[str, Any]) -> str:
     configured = str(naming_config.get("final_file_name_pattern") or "").strip()
     if not configured:
         return default_pattern
-    # Guard against legacy/hardcoded patterns that collapse multiple activities into one file.
     if "{brand}" not in configured or "{activity}" not in configured:
         return default_pattern
     return configured
@@ -183,7 +171,7 @@ def _build_workbook_for_activity(
     activity_name: str,
     yymmdd: str,
     naming_config: dict[str, Any],
-) -> tuple[str, dict[str, int]]:
+) -> tuple[str, dict[str, int], dict[str, list[str]]]:
     source_df_by_sheet: dict[str, pd.DataFrame] = {}
     rows_by_sheet: dict[str, int] = {}
     for sheet_key, raw_files in raw_files_by_sheet.items():
@@ -205,7 +193,7 @@ def _build_workbook_for_activity(
         rows_by_sheet[display_sheet] = int(len(normalized.index))
 
     transformer = MetaExportTransformer()
-    workbook_bytes, _ = transformer.build_unified_workbook(source_df_by_sheet)
+    workbook_bytes, missing_by_sheet = transformer.build_unified_workbook(source_df_by_sheet)
     output_pattern = _resolve_unified_output_pattern(naming_config)
     output_filename = format_name(
         pattern=output_pattern,
@@ -216,7 +204,7 @@ def _build_workbook_for_activity(
     )
     output_path = (output_dir / output_filename).resolve()
     output_path.write_bytes(workbook_bytes)
-    return str(output_path), rows_by_sheet
+    return str(output_path), rows_by_sheet, missing_by_sheet
 
 
 def run_meta_export_with_plan(
@@ -226,24 +214,26 @@ def run_meta_export_with_plan(
     export_event_source: str,
     browser: str,
     output_dir: Path,
-    downloads_dir: Path,
-    logs_dir: Path,
+    raw_dir: Path,
+    trace_dir: Path,
+    user_data_dir: Path,
     progress_cb: ProgressCallback | None = None,
 ) -> AdapterExecutionResult:
     if not plan:
         raise ValueError("No selected activities to run.")
 
     run_id = _now_run_id()
-    run_date_folder = _run_date_folder_name(run_id)
-    logs_dir = _with_run_date_dir(logs_dir, run_date_folder)
-    output_dir = _with_run_date_dir(output_dir, run_date_folder)
-    downloads_dir = _with_run_date_dir(downloads_dir, run_date_folder)
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = output_dir.expanduser().resolve()
+    raw_dir = raw_dir.expanduser().resolve()
+    trace_dir = trace_dir.expanduser().resolve()
+    user_data_dir = user_data_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    downloads_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    user_data_dir.mkdir(parents=True, exist_ok=True)
 
-    logger = configure_logger(logs_dir=logs_dir, run_id=run_id)
-    log_file = str((logs_dir / f"run_{run_id}.log").resolve())
+    logger = configure_logger(logs_dir=trace_dir, run_id=run_id)
+    log_file = str((trace_dir / f"run_{run_id}.log").resolve())
     _emit(
         progress_cb,
         {
@@ -263,23 +253,24 @@ def run_meta_export_with_plan(
     meta = MetaAutomation(
         meta_config=meta_config,
         naming_config=naming_config,
-        download_dir=str(downloads_dir),
+        download_dir=str(raw_dir),
         headless=False,
     )
 
     try:
         from seleniumbase import SB
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError("seleniumbase is required for META automation") from exc
+        raise RuntimeError("seleniumbase is required for Meta automation.") from exc
 
-    sb_kwargs = build_sb_kwargs(meta, engine_browser)
+    logger.info("shared_user_data_dir=%s", user_data_dir)
+    sb_kwargs = build_sb_kwargs(meta, engine_browser, user_data_dir=user_data_dir)
     ensure_browser_driver_ready(browser=engine_browser, logger=logger)
     outputs: list[ActivityExecutionOutput] = []
     overall_errors: list[str] = []
 
     with SB(**sb_kwargs) as sb:
         meta._enable_download_behavior(sb)  # noqa: SLF001
-        verify_download_context(meta, watcher_dir=downloads_dir, logger=logger)
+        verify_download_context(meta, watcher_dir=raw_dir, logger=logger)
         auto_minimized_once = False
         user_window_override = False
         minimize_skip_logged = False
@@ -337,12 +328,6 @@ def run_meta_export_with_plan(
                 urls = list(sheet_plan.urls)
                 url_count = len(urls)
                 if url_count <= 0:
-                    _emit_row(
-                        progress_cb,
-                        row_id=row_id,
-                        status="Skipped",
-                        message="No URL registered for this sheet.",
-                    )
                     continue
 
                 report_name = INTERNAL_TO_WORKBOOK_SHEET_NAME.get(
@@ -374,13 +359,13 @@ def run_meta_export_with_plan(
                         if phase not in {"failed", "downloading", "waiting_ready", "exporting"}:
                             return
                         if phase == "failed":
-                            msg = f"URL {index}/{url_count}: issue detected (attempt {attempt}/2)"
+                            msg = f"URL {index}/{url_count}: 문제 감지 (시도 {attempt}/2)"
                         elif phase == "downloading":
-                            msg = f"URL {index}/{url_count}: downloading (attempt {attempt}/2)"
+                            msg = f"URL {index}/{url_count}: 다운로드 중 (시도 {attempt}/2)"
                         elif phase == "exporting":
-                            msg = f"URL {index}/{url_count}: export requested (attempt {attempt}/2)"
+                            msg = f"URL {index}/{url_count}: 내보내기 요청 중 (시도 {attempt}/2)"
                         else:
-                            msg = f"URL {index}/{url_count}: waiting (attempt {attempt}/2)"
+                            msg = f"URL {index}/{url_count}: 대기 중 (시도 {attempt}/2)"
                         _emit_row(progress_cb, row_id=row_id, status="Running", message=msg)
 
                     return meta._export_report_via_view_id(  # noqa: SLF001
@@ -400,7 +385,7 @@ def run_meta_export_with_plan(
                         progress_cb,
                         row_id=row_id,
                         status="Running",
-                        message=f"URL {index}/{url_count}: first attempt running",
+                        message=f"URL {index}/{url_count}: 1차 시도 중입니다.",
                     )
                     try:
                         success_files.append(_export_one(cleaned_url, index=index, attempt=1))
@@ -408,7 +393,7 @@ def run_meta_export_with_plan(
                             progress_cb,
                             row_id=row_id,
                             status="Running",
-                            message=f"URL {index}/{url_count}: first attempt succeeded",
+                            message=f"URL {index}/{url_count}: 1차 시도 완료",
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.exception(
@@ -424,7 +409,7 @@ def run_meta_export_with_plan(
                             progress_cb,
                             row_id=row_id,
                             status="Running",
-                            message=f"URL {index}/{url_count}: first attempt failed, retry queued",
+                            message=f"URL {index}/{url_count}: 1차 시도 실패, 재시도를 예약했습니다.",
                         )
 
                 remaining_failures: list[tuple[int, str]] = []
@@ -436,8 +421,8 @@ def run_meta_export_with_plan(
                             row_id=row_id,
                             status="Running",
                             message=(
-                                f"Retrying failed URL {retry_idx}/{retry_total} "
-                                f"(original {orig_index}/{url_count})"
+                                f"재시도 {retry_idx}/{retry_total} 진행 중 "
+                                f"(원본 URL {orig_index}/{url_count})"
                             ),
                         )
                         try:
@@ -446,7 +431,7 @@ def run_meta_export_with_plan(
                                 progress_cb,
                                 row_id=row_id,
                                 status="Running",
-                                message=f"URL {orig_index}/{url_count}: retry succeeded",
+                                message=f"URL {orig_index}/{url_count}: 재시도 성공",
                             )
                         except Exception as retry_exc:  # noqa: BLE001
                             logger.exception(
@@ -472,8 +457,8 @@ def run_meta_export_with_plan(
                     failed_sheet_names.append(sheet_display)
                     error_hint = remaining_failures[0][1][:140] if remaining_failures else ""
                     row_message = (
-                        f"{success_count}/{url_count} URL succeeded, "
-                        f"{final_fail_count} failed after retry"
+                        f"{success_count}/{url_count} URL 완료, "
+                        f"{final_fail_count}개 재시도 후 실패"
                     )
                     if error_hint:
                         row_message = f"{row_message} ({error_hint})"
@@ -483,22 +468,23 @@ def run_meta_export_with_plan(
                     retry_success = success_count - (url_count - len(first_failures))
                     if retry_success > 0:
                         row_message = (
-                            f"{success_count}/{url_count} URL completed "
-                            f"(retry recovered {retry_success})"
+                            f"{success_count}/{url_count} URL 완료 "
+                            f"(재시도 복구 {retry_success})"
                         )
                     else:
-                        row_message = f"{success_count}/{url_count} URL completed"
+                        row_message = f"{success_count}/{url_count} URL 완료"
                     _emit_row(progress_cb, row_id=row_id, status="Completed", message=row_message)
 
             if failed_sheet_names:
                 failed_sheet_text = ", ".join(dict.fromkeys(failed_sheet_names))
                 summary_message = (
-                    f"문제된 시트({failed_sheet_text}) export에 실패해 통합파일이 생성되지 않았습니다."
+                    f"문제된 시트({failed_sheet_text}) export에 실패해 통합본을 생성하지 않았습니다."
                 )
                 _emit_activity_result(
                     progress_cb,
                     brand=activity_plan.brand_name,
                     activity=activity_plan.activity_name,
+                    status="Failed",
                     workbook_path="",
                     rows_by_sheet={},
                     failed_sheets=list(dict.fromkeys(failed_sheet_names)),
@@ -514,11 +500,12 @@ def run_meta_export_with_plan(
                 continue
 
             if not any(raw_files_by_sheet.values()):
-                no_file_message = "다운로드된 파일이 없어 통합파일을 생성하지 않았습니다."
+                no_file_message = "다운로드된 파일이 없어 통합본을 생성하지 않았습니다."
                 _emit_activity_result(
                     progress_cb,
                     brand=activity_plan.brand_name,
                     activity=activity_plan.activity_name,
+                    status="Failed",
                     workbook_path="",
                     rows_by_sheet={},
                     failed_sheets=[],
@@ -530,7 +517,17 @@ def run_meta_export_with_plan(
                 continue
 
             try:
-                workbook_path, rows_by_sheet = _build_workbook_for_activity(
+                _emit_activity_result(
+                    progress_cb,
+                    brand=activity_plan.brand_name,
+                    activity=activity_plan.activity_name,
+                    status="Running",
+                    workbook_path="",
+                    rows_by_sheet={},
+                    failed_sheets=[],
+                    message="통합본 생성 중입니다.",
+                )
+                workbook_path, rows_by_sheet, missing_by_sheet = _build_workbook_for_activity(
                     raw_files_by_sheet=raw_files_by_sheet,
                     output_dir=output_dir,
                     brand_name=activity_plan.brand_name,
@@ -538,6 +535,22 @@ def run_meta_export_with_plan(
                     yymmdd=yymmdd,
                     naming_config=naming_config,
                 )
+                for sheet_plan in activity_plan.sheets:
+                    if len(sheet_plan.urls) <= 0:
+                        continue
+                    row_id = (
+                        f"{activity_plan.brand_code}::{activity_plan.activity_name}::{sheet_plan.sheet_display_name}"
+                    )
+                    display_sheet = INTERNAL_TO_WORKBOOK_SHEET_NAME.get(
+                        sheet_plan.sheet_key,
+                        sheet_plan.sheet_display_name,
+                    )
+                    missing_text = ", ".join(missing_by_sheet.get(display_sheet, []))
+                    _emit_row(
+                        progress_cb,
+                        row_id=row_id,
+                        missing_columns_text=missing_text,
+                    )
                 outputs.append(
                     ActivityExecutionOutput(
                         brand_name=activity_plan.brand_name,
@@ -550,10 +563,11 @@ def run_meta_export_with_plan(
                     progress_cb,
                     brand=activity_plan.brand_name,
                     activity=activity_plan.activity_name,
+                    status="Completed",
                     workbook_path=workbook_path,
                     rows_by_sheet=rows_by_sheet,
                     failed_sheets=[],
-                    message="전체 시트 처리 완료",
+                    message=f"통합본 생성완료:{Path(workbook_path).name}",
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
@@ -561,11 +575,12 @@ def run_meta_export_with_plan(
                     activity_plan.brand_name,
                     activity_plan.activity_name,
                 )
-                reason = f"통합파일 생성 실패: {str(exc)[:200]}"
+                reason = f"통합본 생성 실패: {str(exc)[:200]}"
                 _emit_activity_result(
                     progress_cb,
                     brand=activity_plan.brand_name,
                     activity=activity_plan.activity_name,
+                    status="Failed",
                     workbook_path="",
                     rows_by_sheet={},
                     failed_sheets=[],

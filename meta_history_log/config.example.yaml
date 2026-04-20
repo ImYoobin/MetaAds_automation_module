@@ -13,7 +13,7 @@ runner:
   # Optional overrides for runtime behavior only.
   # Base defaults still come from runtime_settings.json.
   headless: false
-  user_data_dir: "%USERPROFILE%\\MetaAdsExport\\user_data\\meta_history_log"
+  user_data_dir: "%USERPROFILE%\\MetaAdsExport\\user_data\\meta\\msedge"
 
   login_timeout_sec: 300
   action_timeout_ms: 15000

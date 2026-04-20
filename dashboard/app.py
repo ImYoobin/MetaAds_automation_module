@@ -1,10 +1,12 @@
-﻿"""Streamlit dashboard app entrypoint."""
+"""Streamlit dashboard app entrypoint."""
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -14,84 +16,123 @@ import streamlit as st
 from dashboard.models import build_activity_id
 from dashboard.services.config_service import DEFAULT_CONFIG_PATH, load_config, save_config
 from dashboard.services.execution_service import create_execution_store, start_execution
-from dashboard.services.validation_service import build_execution_plan, validate_run_selection
+from dashboard.services.validation_service import (
+    build_execution_plan,
+    build_history_execution_plan,
+    validate_run_selection,
+)
 from dashboard.ui import (
     render_bottom_section,
     render_sidebar_execution_section,
     render_top_section,
 )
-from meta_core.constants import (
-    DEFAULT_BROWSER,
-    DEFAULT_USER_DOWNLOADS_DIR,
-    DEFAULT_USER_LOGS_DIR,
-    DEFAULT_USER_OUTPUT_DIR,
-)
+from meta_core.constants import DEFAULT_BROWSER
+from meta_core.pathing import build_meta_shared_user_data_dir
+
 
 RUNTIME_SETTINGS_PATH = Path("config/meta/runtime_settings.json")
-RUNTIME_PATH_KEYS: tuple[str, ...] = ("output_dir", "downloads_dir", "logs_dir")
-RUNTIME_INPUT_KEY_BY_PATH_KEY: dict[str, str] = {
-    "output_dir": "output_dir_input",
-    "downloads_dir": "downloads_dir_input",
-    "logs_dir": "logs_dir_input",
-}
-INVALID_RUNTIME_PATH_MESSAGE = "올바르지 않은 경로입니다. 로컬 PC 경로를 입력해주세요."
+LEGACY_RUNTIME_PATH_KEYS: tuple[str, ...] = ("output_dir", "downloads_dir", "logs_dir")
+BASE_PARENT_INPUT_KEY = "base_parent_dir_input"
+EXPORT_ROOT_DIRNAME = "MetaAdsExport"
+DEFAULT_USER_PARENT_DIR = Path.home()
+DEFAULT_USER_PARENT_DIR_TOKEN = "%USERPROFILE%"
+INVALID_RUNTIME_PATH_MESSAGE = "올바르지 않은 부모 경로입니다. 로컬 PC의 폴더 경로를 입력해주세요."
 _WINDOWS_ABS_DRIVE_RE = re.compile(r"^[A-Za-z]:\\")
 _WINDOWS_DRIVE_TOKEN_RE = re.compile(r"[A-Za-z]:\\")
-_WINDOWS_USER_PROFILE_RE = re.compile(r"^[A-Za-z]:\\Users\\[^\\]+(?:\\|$)", re.IGNORECASE)
+_LEGACY_EXPORT_ROOT_NAMES = {EXPORT_ROOT_DIRNAME.lower(), "googleadsexport"}
 
 
 def _safe_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _safe_path(path_text: str) -> Path:
+    expanded = _safe_text(os.path.expandvars(path_text))
+    return Path(expanded).expanduser().resolve()
+
+
 def _default_runtime_settings() -> dict[str, str]:
+    browser = _safe_text(DEFAULT_BROWSER).lower()
+    if browser not in {"msedge", "chrome"}:
+        browser = "msedge"
     return {
-        "browser": DEFAULT_BROWSER,
-        "output_dir": str(DEFAULT_USER_OUTPUT_DIR),
-        "downloads_dir": str(DEFAULT_USER_DOWNLOADS_DIR),
-        "logs_dir": str(DEFAULT_USER_LOGS_DIR),
+        "browser": browser,
+        "base_parent_dir": DEFAULT_USER_PARENT_DIR_TOKEN,
     }
 
 
-def _to_portable_runtime_path(value: str) -> str:
-    normalized = _safe_text(value).replace("/", "\\").rstrip("\\")
-    if not normalized:
-        return normalized
-
-    home_path = _safe_text(str(Path.home())).replace("/", "\\").rstrip("\\")
-    if not home_path:
-        return normalized
-
-    lowered = normalized.lower()
-    home_lowered = home_path.lower()
-    if lowered == home_lowered:
-        return "%USERPROFILE%"
-
-    prefix = f"{home_lowered}\\"
-    if lowered.startswith(prefix):
-        suffix = normalized[len(home_path) :].lstrip("\\/")
-        if suffix:
-            return f"%USERPROFILE%\\{suffix}"
-        return "%USERPROFILE%"
-
-    return normalized
+def _current_run_date_token() -> str:
+    return _safe_text(st.session_state.get("run_date_folder")) or dt.datetime.now().strftime("%Y%m%d")
 
 
-def _is_foreign_windows_profile_path(value: str) -> bool:
-    normalized = _safe_text(value).replace("/", "\\").rstrip("\\")
-    if not normalized:
-        return False
+def _build_storage_roots(base_parent_dir_text: str = "") -> dict[str, Path]:
+    parent_dir = _safe_path(
+        _safe_text(base_parent_dir_text)
+        or _safe_text(st.session_state.get("base_parent_dir"))
+        or str(DEFAULT_USER_PARENT_DIR)
+    )
+    export_root = (parent_dir / EXPORT_ROOT_DIRNAME).resolve()
+    output_root = (export_root / "output").resolve()
+    return {
+        "base": export_root,
+        "raw_root": (export_root / "raw").resolve(),
+        "trace_root": (export_root / "trace").resolve(),
+        "output_root": output_root,
+        "action_log_root": (output_root / "action_log").resolve(),
+    }
 
-    home_path = _safe_text(str(Path.home())).replace("/", "\\").rstrip("\\")
-    if not home_path:
-        return False
 
-    lowered = normalized.lower()
-    home_lowered = home_path.lower()
-    if lowered == home_lowered or lowered.startswith(f"{home_lowered}\\"):
-        return False
+def _build_run_storage_paths(base_parent_dir_text: str = "", run_date: str = "") -> dict[str, Path]:
+    roots = _build_storage_roots(base_parent_dir_text)
+    effective_run_date = _safe_text(run_date) or _current_run_date_token()
+    return {
+        "run_date": effective_run_date,
+        "base": roots["base"],
+        "raw_root": roots["raw_root"],
+        "trace_root": roots["trace_root"],
+        "output_root": roots["output_root"],
+        "action_log_root": roots["action_log_root"],
+        "raw_dir": (roots["raw_root"] / effective_run_date).resolve(),
+        "trace_dir": (roots["trace_root"] / effective_run_date).resolve(),
+        "output_dir": (roots["output_root"] / effective_run_date).resolve(),
+        "action_log_dir": (roots["action_log_root"] / effective_run_date).resolve(),
+    }
 
-    return bool(_WINDOWS_USER_PROFILE_RE.match(normalized))
+
+def _build_shared_user_data_dir(base_parent_dir_text: str = "", browser: str = "") -> Path:
+    parent_dir = _safe_path(
+        _safe_text(base_parent_dir_text)
+        or _safe_text(st.session_state.get("base_parent_dir"))
+        or str(DEFAULT_USER_PARENT_DIR)
+    )
+    selected_browser = (
+        _safe_text(browser)
+        or _safe_text(st.session_state.get("browser"))
+        or _default_runtime_settings()["browser"]
+    )
+    return build_meta_shared_user_data_dir(parent_dir, selected_browser)
+
+
+def _serialize_base_parent_dir_for_settings(base_parent_dir_text: str) -> str:
+    normalized = _safe_path(base_parent_dir_text)
+    if normalized == DEFAULT_USER_PARENT_DIR.resolve():
+        return DEFAULT_USER_PARENT_DIR_TOKEN
+    return str(normalized)
+
+
+def _infer_base_parent_dir_from_legacy_settings(runtime_settings: dict[str, str]) -> str:
+    for key in LEGACY_RUNTIME_PATH_KEYS:
+        raw_value = _safe_text(runtime_settings.get(key))
+        if not raw_value:
+            continue
+        try:
+            candidate_path = _safe_path(raw_value)
+        except Exception:  # noqa: BLE001
+            continue
+        for ancestor in (candidate_path, *candidate_path.parents):
+            if ancestor.name.lower() in _LEGACY_EXPORT_ROOT_NAMES:
+                return str(ancestor.parent)
+    return ""
 
 
 def _validate_runtime_path(value: Any, *, check_writable: bool) -> tuple[bool, str]:
@@ -136,92 +177,68 @@ def _validate_runtime_path(value: Any, *, check_writable: bool) -> tuple[bool, s
 
 
 def _sanitize_loaded_runtime_settings(runtime_settings: dict[str, str]) -> tuple[dict[str, str], bool]:
-    defaults = _default_runtime_settings()
-    sanitized = dict(defaults)
+    sanitized = {
+        "browser": _default_runtime_settings()["browser"],
+        "base_parent_dir": str(DEFAULT_USER_PARENT_DIR),
+    }
     has_invalid = False
 
-    raw_browser = _safe_text(runtime_settings.get("browser"))
+    raw_browser = _safe_text(runtime_settings.get("browser")).lower()
     if raw_browser:
         if raw_browser in {"msedge", "chrome"}:
             sanitized["browser"] = raw_browser
         else:
             has_invalid = True
 
-    for key in RUNTIME_PATH_KEYS:
-        raw_value = _safe_text(runtime_settings.get(key))
-        if not raw_value:
-            if key in runtime_settings:
-                has_invalid = True
-            continue
-        is_valid, normalized_or_message = _validate_runtime_path(raw_value, check_writable=False)
+    raw_parent_dir = _safe_text(runtime_settings.get("base_parent_dir")) or _infer_base_parent_dir_from_legacy_settings(
+        runtime_settings
+    )
+    if raw_parent_dir:
+        is_valid, normalized_or_message = _validate_runtime_path(raw_parent_dir, check_writable=False)
         if is_valid:
-            if _is_foreign_windows_profile_path(normalized_or_message):
-                has_invalid = True
-                continue
-            sanitized[key] = normalized_or_message
+            sanitized["base_parent_dir"] = normalized_or_message
         else:
             has_invalid = True
+    elif any(_safe_text(runtime_settings.get(key)) for key in LEGACY_RUNTIME_PATH_KEYS):
+        has_invalid = True
 
     return sanitized, has_invalid
 
 
 def _push_runtime_path_warning() -> None:
-    st.session_state.setdefault("ui_messages", []).append(
-        {
-            "level": "warning",
-            "text": INVALID_RUNTIME_PATH_MESSAGE,
-        }
-    )
+    st.session_state["_runtime_path_error"] = INVALID_RUNTIME_PATH_MESSAGE
 
 
-def _on_runtime_path_input_change(path_key: str) -> None:
-    input_key = RUNTIME_INPUT_KEY_BY_PATH_KEY[path_key]
-    candidate = _safe_text(st.session_state.get(input_key))
+def _on_base_parent_dir_input_change() -> None:
+    candidate = _safe_text(st.session_state.get(BASE_PARENT_INPUT_KEY))
     is_valid, normalized_or_message = _validate_runtime_path(candidate, check_writable=False)
     if is_valid:
-        st.session_state[path_key] = normalized_or_message
-        st.session_state[f"_runtime_valid_{path_key}"] = normalized_or_message
-        st.session_state[input_key] = normalized_or_message
+        st.session_state["base_parent_dir"] = normalized_or_message
+        st.session_state["_runtime_valid_base_parent_dir"] = normalized_or_message
+        st.session_state[BASE_PARENT_INPUT_KEY] = normalized_or_message
         return
 
-    fallback = _safe_text(st.session_state.get(f"_runtime_valid_{path_key}"))
+    fallback = _safe_text(st.session_state.get("_runtime_valid_base_parent_dir"))
     if not fallback:
-        fallback = _default_runtime_settings()[path_key]
-    st.session_state[path_key] = fallback
-    st.session_state[input_key] = fallback
-    st.session_state[f"_runtime_valid_{path_key}"] = fallback
+        fallback = str(DEFAULT_USER_PARENT_DIR)
+    st.session_state["base_parent_dir"] = fallback
+    st.session_state["_runtime_valid_base_parent_dir"] = fallback
+    st.session_state[BASE_PARENT_INPUT_KEY] = fallback
     _push_runtime_path_warning()
 
 
-def _on_output_dir_input_change() -> None:
-    _on_runtime_path_input_change("output_dir")
-
-
-def _on_downloads_dir_input_change() -> None:
-    _on_runtime_path_input_change("downloads_dir")
-
-
-def _on_logs_dir_input_change() -> None:
-    _on_runtime_path_input_change("logs_dir")
-
-
 def _validate_runtime_paths_before_run() -> tuple[bool, dict[str, str]]:
-    normalized_paths: dict[str, str] = {}
-    for path_key in RUNTIME_PATH_KEYS:
-        is_valid, normalized_or_message = _validate_runtime_path(
-            st.session_state.get(path_key),
-            check_writable=True,
-        )
-        if not is_valid:
-            _push_runtime_path_warning()
-            return False, {}
-        normalized_paths[path_key] = normalized_or_message
+    is_valid, normalized_or_message = _validate_runtime_path(
+        st.session_state.get("base_parent_dir"),
+        check_writable=True,
+    )
+    if not is_valid:
+        _push_runtime_path_warning()
+        return False, {}
 
-    for path_key, normalized in normalized_paths.items():
-        st.session_state[path_key] = normalized
-        st.session_state[f"_runtime_valid_{path_key}"] = normalized
-
-    return True, normalized_paths
+    st.session_state["base_parent_dir"] = normalized_or_message
+    st.session_state["_runtime_valid_base_parent_dir"] = normalized_or_message
+    return True, {"base_parent_dir": normalized_or_message}
 
 
 def _load_runtime_settings(path: str | Path = RUNTIME_SETTINGS_PATH) -> tuple[dict[str, str], list[str]]:
@@ -238,7 +255,7 @@ def _load_runtime_settings(path: str | Path = RUNTIME_SETTINGS_PATH) -> tuple[di
         return {}, [f"Run settings 형식이 올바르지 않습니다: {settings_path}"]
 
     out: dict[str, str] = {}
-    for key in ("browser", "output_dir", "downloads_dir", "logs_dir"):
+    for key in ("browser", "base_parent_dir", *LEGACY_RUNTIME_PATH_KEYS):
         value = _safe_text(parsed.get(key))
         if value:
             out[key] = value
@@ -250,14 +267,10 @@ def _runtime_settings_payload() -> dict[str, str]:
     browser = _safe_text(st.session_state.get("browser")) or defaults["browser"]
     if browser not in {"msedge", "chrome"}:
         browser = defaults["browser"]
-    output_dir = _safe_text(st.session_state.get("output_dir")) or defaults["output_dir"]
-    downloads_dir = _safe_text(st.session_state.get("downloads_dir")) or defaults["downloads_dir"]
-    logs_dir = _safe_text(st.session_state.get("logs_dir")) or defaults["logs_dir"]
+    base_parent_dir = _safe_text(st.session_state.get("base_parent_dir")) or str(DEFAULT_USER_PARENT_DIR)
     return {
         "browser": browser,
-        "output_dir": _to_portable_runtime_path(output_dir),
-        "downloads_dir": _to_portable_runtime_path(downloads_dir),
-        "logs_dir": _to_portable_runtime_path(logs_dir),
+        "base_parent_dir": _serialize_base_parent_dir_for_settings(base_parent_dir),
     }
 
 
@@ -278,15 +291,40 @@ def _persist_runtime_settings(*, force: bool = False) -> None:
         st.session_state["_runtime_settings_needs_heal"] = False
     except Exception as exc:  # noqa: BLE001
         error_text = f"Run settings 저장 실패: {exc}"
-        if _safe_text(st.session_state.get("_runtime_settings_last_error")) != error_text:
-            st.session_state.setdefault("ui_messages", []).append(
-                {
-                    "level": "warning",
-                    "text": error_text,
-                }
-            )
         st.session_state["_runtime_settings_last_error"] = error_text
         st.session_state["_runtime_settings_needs_heal"] = True
+
+
+def _prepare_run_directories() -> dict[str, str]:
+    run_date = dt.datetime.now().strftime("%Y%m%d")
+    run_paths = _build_run_storage_paths(run_date=run_date)
+    run_output_dir = run_paths["output_dir"]
+    run_raw_dir = run_paths["raw_dir"]
+    run_trace_dir = run_paths["trace_dir"]
+    run_action_log_dir = run_paths["action_log_dir"]
+
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+    run_raw_dir.mkdir(parents=True, exist_ok=True)
+    run_trace_dir.mkdir(parents=True, exist_ok=True)
+    run_action_log_dir.mkdir(parents=True, exist_ok=True)
+
+    st.session_state["run_output_root_dir"] = str(run_paths["output_root"])
+    st.session_state["run_output_dir"] = str(run_output_dir)
+    st.session_state["run_raw_dir"] = str(run_raw_dir)
+    st.session_state["run_trace_dir"] = str(run_trace_dir)
+    st.session_state["run_downloads_dir"] = str(run_raw_dir)
+    st.session_state["run_logs_dir"] = str(run_trace_dir)
+    st.session_state["run_action_log_dir"] = str(run_action_log_dir)
+    st.session_state["run_date_folder"] = run_date
+
+    return {
+        "run_date": run_date,
+        "output_dir": str(run_output_dir),
+        "output_root_dir": str(run_paths["output_root"]),
+        "raw_dir": str(run_raw_dir),
+        "trace_dir": str(run_trace_dir),
+        "action_log_dir": str(run_action_log_dir),
+    }
 
 
 def _init_state() -> None:
@@ -314,33 +352,34 @@ def _init_state() -> None:
     st.session_state.setdefault("selected_activity_ids", set())
     st.session_state.setdefault("pending_brand_delete", None)
     st.session_state.setdefault("pending_activity_delete", None)
+    st.session_state.setdefault("enable_report_download", True)
+    st.session_state.setdefault("enable_action_log_download", True)
+    st.session_state.setdefault("run_enable_report_download", True)
+    st.session_state.setdefault("run_enable_action_log_download", True)
     st.session_state.setdefault("execution_store", create_execution_store())
-    st.session_state.setdefault("browser", runtime_settings["browser"])
-    if _safe_text(st.session_state.get("browser")) not in {"msedge", "chrome"}:
-        st.session_state["browser"] = runtime_settings["browser"]
-        st.session_state["_runtime_settings_needs_heal"] = True
 
-    for path_key in RUNTIME_PATH_KEYS:
-        st.session_state.setdefault(path_key, runtime_settings[path_key])
-        is_valid, normalized_or_message = _validate_runtime_path(
-            st.session_state.get(path_key),
-            check_writable=False,
-        )
-        if not is_valid:
-            normalized = runtime_settings[path_key]
-            st.session_state["_runtime_settings_needs_heal"] = True
-        else:
-            normalized = normalized_or_message
-        st.session_state[path_key] = normalized
-        st.session_state[f"_runtime_valid_{path_key}"] = normalized
-        input_key = RUNTIME_INPUT_KEY_BY_PATH_KEY[path_key]
-        st.session_state.setdefault(input_key, normalized)
+    browser = _safe_text(st.session_state.get("browser")) or runtime_settings["browser"]
+    if browser not in {"msedge", "chrome"}:
+        browser = runtime_settings["browser"]
+        st.session_state["_runtime_settings_needs_heal"] = True
+    st.session_state["browser"] = browser
+
+    base_parent_dir = _safe_text(st.session_state.get("base_parent_dir")) or runtime_settings["base_parent_dir"]
+    is_valid, normalized_or_message = _validate_runtime_path(base_parent_dir, check_writable=False)
+    if is_valid:
+        normalized_parent = normalized_or_message
+    else:
+        normalized_parent = runtime_settings["base_parent_dir"]
+        st.session_state["_runtime_settings_needs_heal"] = True
+    st.session_state["base_parent_dir"] = normalized_parent
+    st.session_state["_runtime_valid_base_parent_dir"] = normalized_parent
+    st.session_state.setdefault(BASE_PARENT_INPUT_KEY, normalized_parent)
+    st.session_state[BASE_PARENT_INPUT_KEY] = _safe_text(st.session_state.get(BASE_PARENT_INPUT_KEY)) or normalized_parent
 
     st.session_state.setdefault("opened_output_for_run", "")
 
     if has_invalid_runtime_settings:
         runtime_messages = [*runtime_messages, INVALID_RUNTIME_PATH_MESSAGE]
-
     if runtime_messages:
         existing = st.session_state.setdefault("ui_messages", [])
         existing.extend({"level": "warning", "text": message} for message in runtime_messages)
@@ -351,6 +390,7 @@ def _init_state() -> None:
         json.dumps(_runtime_settings_payload(), ensure_ascii=False, sort_keys=True),
     )
     st.session_state.setdefault("_runtime_settings_last_error", "")
+    st.session_state.setdefault("_page_notice", {})
 
 
 def _activity_label_map(config_data: dict[str, Any]) -> dict[str, str]:
@@ -379,54 +419,39 @@ def _persist_config() -> None:
     )
 
 
+def _execution_modes_enabled() -> tuple[bool, bool]:
+    return (
+        bool(st.session_state.get("enable_report_download", True)),
+        bool(st.session_state.get("enable_action_log_download", True)),
+    )
+
+
 def _open_output_folder_for_completed_run(execution_snapshot: dict[str, Any]) -> None:
     run_status = _safe_text(execution_snapshot.get("run_status"))
     run_id = _safe_text(execution_snapshot.get("run_id"))
-    if run_status not in {"Completed", "Completed (With Failures)"} or not run_id:
+    outputs = execution_snapshot.get("outputs") or []
+    history_outputs = execution_snapshot.get("history_outputs") or []
+    has_any_output = bool(outputs or history_outputs)
+    if run_status not in {"Completed", "Completed (With Failures)", "Failed"} or not run_id or not has_any_output:
         return
     if _safe_text(st.session_state.get("opened_output_for_run")) == run_id:
         return
 
-    target_dir: Path | None = None
-    outputs = execution_snapshot.get("outputs") or []
-    if isinstance(outputs, list) and outputs:
-        first_output = outputs[0]
-        if isinstance(first_output, dict):
-            workbook_path = _safe_text(first_output.get("workbook_path"))
-            if workbook_path:
-                target_dir = Path(workbook_path).expanduser().resolve().parent
-
-    if target_dir is None:
-        output_dir = _safe_text(st.session_state.get("output_dir"))
-        if output_dir:
-            target_dir = Path(output_dir).expanduser().resolve()
-
-    if target_dir is None:
-        st.session_state["opened_output_for_run"] = run_id
-        return
+    output_root_dir = _safe_text(st.session_state.get("run_output_root_dir"))
+    if not output_root_dir:
+        output_root_dir = str(_build_storage_roots()["output_root"])
 
     try:
-        os.startfile(str(target_dir))  # type: ignore[attr-defined]
-        st.session_state.setdefault("ui_messages", []).append(
-            {
-                "level": "success",
-                "text": f"결과 파일 폴더를 열었습니다: {target_dir}",
-            }
-        )
-    except Exception as exc:
-        st.session_state.setdefault("ui_messages", []).append(
-            {
-                "level": "warning",
-                "text": f"결과 파일 폴더를 자동으로 열지 못했습니다: {exc}",
-            }
-        )
-    finally:
-        st.session_state["opened_output_for_run"] = run_id
+        subprocess.Popen(["explorer", output_root_dir])  # noqa: S603
+    except Exception:
+        pass
+
+    st.session_state["opened_output_for_run"] = run_id
 
 
 def main() -> None:
     st.set_page_config(
-        page_title="Meta Ads Auto Export",
+        page_title="Meta Ads Auto Download",
         page_icon="M",
         layout="wide",
     )
@@ -439,68 +464,107 @@ def main() -> None:
     execution_snapshot = execution_store.snapshot()
     _open_output_folder_for_completed_run(execution_snapshot)
 
+    report_enabled, action_log_enabled = _execution_modes_enabled()
     validation = validate_run_selection(
         config_data,
         set(st.session_state.get("selected_activity_ids", set())),
+        enable_report_download=report_enabled,
+        enable_action_log_download=action_log_enabled,
     )
     activity_labels = _activity_label_map(config_data)
 
     def _start_run() -> None:
+        report_enabled, action_log_enabled = _execution_modes_enabled()
         current_validation = validate_run_selection(
             config_data,
             set(st.session_state.get("selected_activity_ids", set())),
+            enable_report_download=report_enabled,
+            enable_action_log_download=action_log_enabled,
         )
         if not current_validation.can_run:
-            st.session_state.setdefault("ui_messages", []).append(
-                {
-                    "level": "warning",
-                    "text": " / ".join(current_validation.reasons),
-                }
-            )
-            return
-        paths_valid, normalized_paths = _validate_runtime_paths_before_run()
-        if not paths_valid:
+            st.session_state["_page_notice"] = {
+                "level": "warning",
+                "text": " / ".join(current_validation.reasons),
+            }
+            st.rerun()
             return
 
+        paths_valid, _ = _validate_runtime_paths_before_run()
+        if not paths_valid:
+            st.rerun()
+            return
+
+        run_dirs = _prepare_run_directories()
         _persist_config()
-        plan = build_execution_plan(
+        user_data_dir = _build_shared_user_data_dir(
+            browser=_safe_text(st.session_state.get("browser")) or _default_runtime_settings()["browser"],
+        )
+        report_plan = build_execution_plan(
+            config_data,
+            set(st.session_state.get("selected_activity_ids", set())),
+        )
+        history_plan = build_history_execution_plan(
             config_data,
             set(st.session_state.get("selected_activity_ids", set())),
         )
         ok, message = start_execution(
             store=execution_store,
-            plan=plan,
+            report_plan=report_plan,
+            history_plan=history_plan,
+            enable_report_download=report_enabled,
+            enable_action_log_download=action_log_enabled,
             view_event_source=_safe_text(config_data.get("view_event_source")),
             export_event_source=_safe_text(config_data.get("export_event_source")),
-            browser=_safe_text(st.session_state.get("browser")) or DEFAULT_BROWSER,
-            output_dir=Path(normalized_paths["output_dir"]),
-            downloads_dir=Path(normalized_paths["downloads_dir"]),
-            logs_dir=Path(normalized_paths["logs_dir"]),
-        )
-        st.session_state.setdefault("ui_messages", []).append(
-            {
-                "level": "success" if ok else "warning",
-                "text": message,
-            }
+            browser=_safe_text(st.session_state.get("browser")) or _default_runtime_settings()["browser"],
+            output_dir=Path(run_dirs["output_dir"]),
+            raw_dir=Path(run_dirs["raw_dir"]),
+            trace_dir=Path(run_dirs["trace_dir"]),
+            action_log_dir=Path(run_dirs["action_log_dir"]),
+            user_data_dir=user_data_dir,
         )
         if ok:
+            st.session_state["run_enable_report_download"] = report_enabled
+            st.session_state["run_enable_action_log_download"] = action_log_enabled
             st.session_state["opened_output_for_run"] = ""
+            st.session_state["run_user_data_dir"] = str(user_data_dir)
+            st.session_state["_page_notice"] = {}
+        else:
+            st.session_state["_page_notice"] = {
+                "level": "warning",
+                "text": message,
+            }
         st.rerun()
 
-    st.title("Meta Ads Auto Export")
+    st.title("Meta Ads Auto Download")
     st.markdown(
-        "📋 상단에서 Export할 Report를 선택합니다.<br>"
-        "📊 하단에서 실행 준비 상태와 진행 로그를 확인합니다.<br>"
-        "⚙️ 좌측 사이드바에서 Run Settings를 설정합니다.",
+        "광고 계정에 세팅된 리포트 URL을 붙여넣어 주세요.<br>"
+        "시트별로 등록된 URL을 기반으로 액티비티별 통합 파일이 생성됩니다.",
         unsafe_allow_html=True,
     )
 
+    notice = st.session_state.pop("_page_notice", {})
+    if isinstance(notice, dict):
+        notice_text = _safe_text(notice.get("text"))
+        notice_level = _safe_text(notice.get("level")).lower()
+        if notice_text:
+            if notice_level == "success":
+                st.success(notice_text)
+            elif notice_level == "error":
+                st.error(notice_text)
+            else:
+                st.warning(notice_text)
+
+    preview_paths = _build_run_storage_paths()
     render_sidebar_execution_section(
-        on_output_dir_change=_on_output_dir_input_change,
-        on_downloads_dir_change=_on_downloads_dir_input_change,
-        on_logs_dir_change=_on_logs_dir_input_change,
+        preview_paths=preview_paths,
+        is_running=bool(execution_snapshot.get("is_running")),
+        on_base_parent_dir_change=_on_base_parent_dir_input_change,
     )
+    runtime_path_error = _safe_text(st.session_state.pop("_runtime_path_error", ""))
+    if runtime_path_error:
+        st.warning(runtime_path_error)
     _persist_runtime_settings(force=bool(st.session_state.get("_runtime_settings_needs_heal")))
+
     render_top_section(
         config_data=config_data,
         save_callback=_persist_config,
@@ -509,12 +573,6 @@ def main() -> None:
         on_start_execution=_start_run,
     )
 
-    validation = validate_run_selection(
-        config_data,
-        set(st.session_state.get("selected_activity_ids", set())),
-    )
-
-    st.divider()
     render_bottom_section(
         validation=validation,
         execution_snapshot=execution_snapshot,

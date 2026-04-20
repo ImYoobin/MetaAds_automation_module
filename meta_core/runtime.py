@@ -121,10 +121,19 @@ def verify_download_context(meta: Any, *, watcher_dir: Path, logger: logging.Log
     return snapshot
 
 
-def build_sb_kwargs(meta: Any, requested_browser: str) -> dict[str, Any]:
+def build_sb_kwargs(
+    meta: Any,
+    requested_browser: str,
+    *,
+    user_data_dir: str | Path | None = None,
+) -> dict[str, Any]:
     browser = (requested_browser or "chrome").strip().lower()
     sb_kwargs = dict(meta._build_sb_kwargs(browser))  # noqa: SLF001 - reuse existing runtime kwargs
-    sb_kwargs.pop("user_data_dir", None)
+    resolved_user_data_dir = str(user_data_dir or "").strip()
+    if resolved_user_data_dir:
+        sb_kwargs["user_data_dir"] = str(Path(resolved_user_data_dir).expanduser().resolve())
+    else:
+        sb_kwargs.pop("user_data_dir", None)
     if truthy_env("META_RUNNER_DISABLE_UC", "1"):
         sb_kwargs.pop("uc", None)
         sb_kwargs.pop("uc_subprocess", None)

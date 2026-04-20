@@ -9,5 +9,6 @@ downloads/
 user_data/
 .tmp*/
 tmp*/
+.venv_meta/
 dist/
 release/
